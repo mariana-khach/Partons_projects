@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario demonstrates a simple task as the evaluation of GPD model in a single kinematic point. The result of this scenario is printed out to the standard output. These are the values for all defined in the model GPDs, including singlet and non-singlet combinations for quarks. 
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2017-07-18" description="GPD evaluation for single kinematics example">
+
+   <!-- First task: evaluate GPD model for a single kinematics --> 
+   <!-- Indicate service and its methods to be used --> 
+   <task service="GPDService" method="computeSingleKinematic">
+
+      <!-- Define GPD kinematics -->
+      <kinematics type="GPDKinematic">
+         <param name="x" value="0.1" />
+         <param name="xi" value="0.2" />
+         <param name="t" value="-100000" />
+         <param name="t_unit" value="MeV2" />
+         <param name="MuF2" value="2." />
+         <param name="MuR2" value="2." />
+      </kinematics>
+
+      <!-- Define physics assumptions -->
+      <computation_configuration>
+
+         <!-- Select GPD model -->
+         <module type="GPDModule" name="GPDGK16">
+         </module>
+
+      </computation_configuration>
+
+   </task>
+
+   <!-- Second task: print results of the last computation into standard output --> 
+   <task service="GPDService" method="printResults">
+   </task>
+
+</scenario>

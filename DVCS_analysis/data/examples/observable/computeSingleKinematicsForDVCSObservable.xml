@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario demonstrates a simple task as the evaluation of DVCS observable in a single kinematic point. The result of this scenario is printed out to the standard output. 
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2017-07-18" description="DVCS observable evaluation for single kinematics example">
+
+   <!-- First task: evaluate DVCS observable for a single kinematics --> 
+   <!-- Indicate service and its methods to be used --> 
+   <task service="DVCSObservableService" method="computeSingleKinematic">
+
+      <!-- Define DVCS observable kinematics -->
+      <kinematics type="DVCSObservableKinematic">
+         <param name="xB" value="0.2" />
+         <param name="t" value="-0.1" />
+         <param name="Q2" value="2." />
+         <param name="E" value="6." />
+         <param name="phi" value="0." />
+      </kinematics>
+
+      <!-- Define physics assumptions -->
+      <computation_configuration>
+
+         <!-- Select DVCS observable -->
+         <module type="DVCSObservableModule" name="DVCSAllMinus">
+
+            <!-- Select DVCS process model -->
+            <module type="DVCSProcessModule" name="DVCSProcessGV08">
+
+               <!-- Select scales module -->
+               <!-- (it is used to evaluate factorization and renormalization scales out of kinematics) -->
+               <module type="DVCSScalesModule" name="DVCSScalesQ2Multiplier">
+
+                  <!-- Configure this module -->
+                  <param name="lambda" value="1." />
+               </module>
+
+               <!-- Select xi-converter module -->
+               <!-- (it is used to evaluate GPD variable xi out of kinematics) -->
+               <module type="DVCSXiConverterModule" name="DVCSXiConverterXBToXi">
+               </module>
+
+               <!-- Select DVCS CFF model -->
+               <module type="DVCSConvolCoeffFunctionModule" name="DVCSCFFStandard">
+
+                  <!-- Indicate pQCD order of calculation -->
+                  <param name="qcd_order_type" value="LO" />
+
+                  <!-- Select GPD model -->
+                  <module type="GPDModule" name="GPDGK16">
+                  </module>
+
+               </module>
+
+            </module>
+
+         </module>
+
+      </computation_configuration>
+
+   </task>
+
+   <!-- Second task: print results of the last computation into standard output --> 
+   <task service="DVCSObservableService" method="printResults">
+   </task>
+
+</scenario>

@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario demonstrates a simple task as the evaluation of DVMP observable in a single kinematic point. The result of this scenario is printed out to the standard output. 
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2017-07-18" description="DVMP observable evaluation for single kinematics example">
+
+   <!-- First task: evaluate DVMP observable for a single kinematics --> 
+   <!-- Indicate service and its methods to be used --> 
+   <task service="DVMPObservableService" method="computeManyKinematic">
+
+      <!-- Define DVMP observable kinematics -->
+      <kinematics type="DVMPObservableKinematic">
+
+         <!-- Path to file defining kinematics -->
+         <param name="file" value="/home/partons/git/partons-example/data/examples/observable/kinematics_dvmp_observable_with_units.csv" />
+      </kinematics>
+
+      <!-- Define physics assumptions -->
+      <computation_configuration>
+
+         <!-- Select DVMP observable -->
+         <module type="DVMPObservableModule" name="DVMPCrossSectionUUMinusPi0">
+
+            <!-- Select DVMP process model -->
+            <module type="DVMPProcessModule" name="DVMPProcessGK06">
+
+               <!-- Select scales module -->
+               <!-- (it is used to evaluate factorization and renormalization scales out of kinematics) -->
+               <module type="DVMPScalesModule" name="DVMPScalesQ2Multiplier">
+
+                  <!-- Configure this module -->
+                  <param name="lambda" value="1." />
+               </module>
+
+               <!-- Select xi-converter module -->
+               <!-- (it is used to evaluate GPD variable xi out of kinematics) -->
+               <module type="DVMPXiConverterModule" name="DVMPXiConverterXBToXi">
+               </module>
+
+               <!-- Select DVMP CFF model -->
+               <module type="DVMPConvolCoeffFunctionModule" name="DVMPCFFGK06">
+
+            	  <!-- Parameters of MC integration -->
+            	  <param name="nWarmUps" value="10000" />
+            	  <param name="nCalls" value="100000" />
+            	  <param name="chi2Limit" value="0.8" />
+
+                  <!-- Indicate pQCD order of calculation -->
+                  <param name="qcd_order_type" value="LO" />
+
+                  <!-- Select GPD model -->
+                  <module type="GPDModule" name="GPDGK19">
+                  </module>
+
+               </module>
+
+            </module>
+
+         </module>
+
+      </computation_configuration>
+
+   </task>
+
+   <!-- Second task: print results of the last computation into standard output --> 
+   <task service="DVMPObservableService" method="printResults">
+   </task>
+
+</scenario>

@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario demonstrates a simple task as the evaluation of GPD model in a single kinematic point making use of GPD evolution. The result of this scenario is printed out to the standard output. These are the values for all defined in the model GPDs, including singlet and non-singlet combinations for quarks. Note that you can use this way of configuration to include the GPD evolution in any calculation of CFFs or observables.
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2017-07-18" description="GPD evaluation for single kinematics example with evolution">
+
+   <!-- First task: evaluate GPD model for a single kinematics --> 
+   <!-- Indicate service and its methods to be used --> 
+   <task service="GPDService" method="computeSingleKinematic">
+
+      <!-- Define GPD kinematics -->
+      <kinematics type="GPDKinematic">
+         <param name="x" value="0.1" />
+         <param name="xi" value="0.2" />
+         <param name="t" value="-0.1" />
+         <param name="MuF2" value="40." />
+         <param name="MuR2" value="40." />
+      </kinematics>
+
+      <!-- Define physics assumptions -->
+       <computation_configuration>
+
+         <!-- Select GPD model -->
+         <module type="GPDModule" name="GPDGK16">
+
+	    <!-- Select GPD evolution model -->
+            <module type="GPDEvolutionModule" name="GPDEvolutionVinnikov">
+
+	       <!-- Select pQCD order -->	
+               <param name="qcd_order_type" value="LO" />
+
+               <!-- Number of steps in integration over factorization scale -->
+               <param name="numberOfNodes" value="10" />
+
+	       <!-- Select alpha_s model -->	
+               <module type="RunningAlphaStrongModule" name="RunningAlphaStrongVinnikov">
+               </module>
+
+	       <!-- Select model defining number of active flavors -->	
+               <module type="ActiveFlavorsThresholdsModule" name="ActiveFlavorsThresholdsConstant">
+               
+		  <!-- In this ActiveFlavorsThresholdsModule model we put the value by hand -->
+		  <param name="nFlavors" value="3" />
+
+               </module>
+
+            </module>
+
+         </module>
+
+      </computation_configuration>
+
+   </task>
+
+   <!-- Second task: print results of the last computation into standard output --> 
+   <task service="GPDService" method="printResults">
+   </task>
+
+</scenario>

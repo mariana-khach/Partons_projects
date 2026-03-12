@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario demonstrates a simple task as the evaluation of a
+collinear distribution in a single kinematic point using LHAPDF. The
+result of this scenario is printed out to the standard output. These
+are the values for all defined distributions. 
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2020-07-18" description="Collinear distribution evaluation for single kinematics example using LHAPDF">
+
+   <!-- First task: evaluate CollinearDistribution model for a single kinematics --> 
+   <!-- Indicate service and its methods to be used --> 
+   <task service="CollinearDistributionService" method="computeSingleKinematic">
+
+      <!-- Define CollinearDistribution kinematics -->
+      <kinematics type="CollinearDistributionKinematic">
+         <param name="x" value="0.1" />
+         <param name="MuF2" value="100." />
+         <param name="MuR2" value="100." />
+      </kinematics>
+
+      <!-- Define physics assumptions -->
+      <computation_configuration>
+
+         <!-- Select CollinearDistribution model -->
+         <module type="CollinearDistributionModule" name="CollinearDistributionLHAPDF">
+
+            <!-- Indicate name of the LHAPDF set -->
+            <param name="setName" value="CT14nnlo" />
+
+         </module>
+
+      </computation_configuration>
+
+   </task>
+
+   <!-- Second task: print results of the last computation into standard output --> 
+   <task service="CollinearDistributionService" method="printResults">
+   </task>
+
+</scenario>

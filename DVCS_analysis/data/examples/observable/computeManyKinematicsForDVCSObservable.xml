@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario demonstrates the evaluation of DVCS observable for kinematics defined in a text file. In this file kinematic points are encoded in separate lines using the following format: "xB|t|Q2|phi|E". The result of this scenario is printed out to the standard output.
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2017-07-18" description="DVCS observable for many kinematics evaluation example">
+
+   <!-- First task: evaluate DVCS observable for a single kinematics --> 
+   <!-- Indicate service and its methods to be used --> 
+   <task service="DVCSObservableService" method="computeManyKinematic">
+
+      <!-- Define DVCS observable kinematics -->
+      <kinematics type="DVCSObservableKinematic">
+
+         <!-- Path to file defining kinematics -->
+         <param name="file" value="/home/partons/git/partons-example/data/examples/observable/kinematics_dvcs_observable.csv" />
+      </kinematics>
+
+      <!-- Define physics assumptions -->
+      <computation_configuration>
+
+         <!-- Select DVCS observable -->
+         <module type="DVCSObservableModule" name="DVCSAllMinus">
+
+            <!-- Select DVCS process model -->
+            <module type="DVCSProcessModule" name="DVCSProcessGV08">
+
+               <!-- Select scales module -->
+               <!-- (it is used to evaluate factorization and renormalization scales out of kinematics) -->
+               <module type="DVCSScalesModule" name="DVCSScalesQ2Multiplier">
+
+                  <!-- Configure this module -->
+                  <param name="lambda" value="1." />
+               </module>
+
+               <!-- Select xi-converter module -->
+               <!-- (it is used to evaluate GPD variable xi out of kinematics) -->
+               <module type="DVCSXiConverterModule" name="DVCSXiConverterXBToXi">
+               </module>
+
+               <!-- Select DVCS CFF model -->
+               <module type="DVCSConvolCoeffFunctionModule" name="DVCSCFFStandard">
+
+                  <!-- Indicate pQCD order of calculation -->
+                  <param name="qcd_order_type" value="LO" />
+
+                  <!-- Select GPD model -->
+                  <module type="GPDModule" name="GPDGK16">
+                  </module>
+
+               </module>
+
+            </module>
+
+         </module>
+
+      </computation_configuration>
+
+   </task>
+
+   <!-- Second task: print results of the last computation into standard output --> 
+   <task service="DVCSObservableService" method="printResults">
+   </task>
+
+</scenario>

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario demonstrates a simple task as the evaluation of DDVCS Compton Form Factors (CFF) in a single kinematic point. The result of this scenario is printed out to the standard output. These are CFF values for all GPD types defined in the selected GPD model.
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2017-07-18" description="DDVCS CFF evaluation for single kinematics example">
+
+   <!-- First task: evaluate DDVCS CFF for a single kinematics --> 
+   <!-- Indicate service and its methods to be used --> 
+   <task service="DDVCSConvolCoeffFunctionService" method="computeSingleKinematic">
+
+      <!-- Define DDVCS CFF kinematics -->
+      <kinematics type="DDVCSConvolCoeffFunctionKinematic">
+         <param name="xi" value="0.01" />
+         <param name="t" value="-0.1" />
+         <param name="Q2" value="4." />
+         <param name="Q2Prim" value="2." />
+         <param name="MuF2" value="6." />
+         <param name="MuR2" value="6." />
+      </kinematics>
+
+      <!-- Define physics assumptions -->
+      <computation_configuration>
+
+         <!-- Select DDVCS CFF model -->
+         <module type="DDVCSConvolCoeffFunctionModule" name="DDVCSCFFStandard">
+
+            <!-- Indicate pQCD order of calculation -->
+            <param name="qcd_order_type" value="LO" />
+
+            <!-- Select GPD model -->
+            <module type="GPDModule" name="GPDGK16">
+            </module>
+
+         </module>
+
+      </computation_configuration>
+
+   </task>
+
+   <!-- Second task: print results of the last computation into standard output --> 
+   <task service="DDVCSConvolCoeffFunctionService" method="printResults">
+   </task>
+
+</scenario>

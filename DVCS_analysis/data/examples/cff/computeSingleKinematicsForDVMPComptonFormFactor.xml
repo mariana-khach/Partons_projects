@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario demonstrates a simple task as the evaluation of DVMP Compton Form Factors (CFF) in a single kinematic point. The result of this scenario is printed out to the standard output. These are CFF values for all GPD types defined in the selected GPD model.
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2017-07-18" description="DVMP CFF evaluation for single kinematics example">
+
+   <!-- First task: evaluate DVCS CFF for a single kinematics --> 
+   <!-- Indicate service and its methods to be used --> 
+   <task service="DVMPConvolCoeffFunctionService" method="computeSingleKinematic">
+
+      <!-- Define DVCS CFF kinematics -->
+      <kinematics type="DVMPConvolCoeffFunctionKinematic">
+         <param name="xi" value="0.01" />
+         <param name="t" value="-0.1" />
+         <param name="Q2" value="4." />
+         <param name="MuF2" value="4." />
+         <param name="MuR2" value="4." />
+         <param name="meson" value="pi0" />
+         <param name="mesonPolarization" value="UNDEFINED" />
+      </kinematics>
+
+      <!-- Define physics assumptions -->
+      <computation_configuration>
+
+         <!-- Select DVCS CFF model -->
+         <module type="DVMPConvolCoeffFunctionModule" name="DVMPCFFGK06">
+
+            <!-- Parameters of MC integration -->
+            <param name="nWarmUps" value="100" />
+            <param name="nCalls" value="100" />
+            <param name="chi2Limit" value="0.8" />
+
+            <!-- Indicate pQCD order of calculation -->
+            <param name="qcd_order_type" value="LO" />
+
+            <!-- Select GPD model -->
+            <module type="GPDModule" name="GPDGK19">
+            </module>
+
+         </module>
+
+      </computation_configuration>
+
+   </task>
+
+   <!-- Second task: print results of the last computation into standard output --> 
+   <task service="DVMPConvolCoeffFunctionService" method="printResults">
+   </task>
+
+</scenario>

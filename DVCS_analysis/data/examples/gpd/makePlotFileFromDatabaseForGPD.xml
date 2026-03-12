@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario illustrates how to select specific data from the database and write them to a file to be used e.g. for plotting purposes. To run this task you must first fill the database with some results. You can run for instance computeManyKinematicsForGPD.xml scenario with storeInDB="1". After the successful insertion PARTONS returns to the standard output unique computation_id, which you should use whenever needed to refer the inserted data. 
+
+This scenario uses generatePlotFile task, which defines SELECT...WHERE... SQL-like query. You can play with the following variables:
+
+=====================================================================================================================
+Name                       Description                               Type           Possible values 
+=====================================================================================================================
+x                          GPD kinematics x 		             double
+xi                         GPD kinematics xi 		             double
+t                          GPD kinematics t 		             double
+MuF2                       GPD kinematics MuF2 	             	     double
+MuR2                       GPD kinematics MuR2 	             	     double
+
+quark_distribution         GPD value for specific quark 	     double
+quark_distribution_plus    GPD singlet value for specific quark      double
+quark_distribution_minus   GPD non-singlet value for specific quark  double
+gluon_distribution_value   GPD value for gluons 		     double
+
+computation_id             Unique id of related computation	     integer
+computation_module_name    Name of GPD module used in computation    char string
+gpd_type_short_name        GPD type 				     char string    H, E, etc. see GPDType::Type
+quark_flavor_short_name    Quark flavor				     char string    u, d, etc. see QuarkFlavor::Type 
+=====================================================================================================================
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2017-07-18" description="Get GPD result from database">
+
+   <!-- Task: generate file with data matching indicated criteria --> 
+   <task service="GPDService" method="generatePlotFile">
+
+      <!-- Variables selected to be stored in the output file -->
+      <task_param type="select">
+         <param name="xPlot" value="x" />
+         <param name="yPlot" value="quark_distribution" />
+      </task_param>
+
+      <!-- Applied requirements -->
+      <task_param type="where">
+         <param name="computation_id" value="1" />
+         <param name="gpd_type_short_name" value="H" />
+         <param name="quark_flavor_short_name" value="u" />
+      </task_param>
+
+      <!-- Path to the output file -->
+      <task_param type="output">
+         <param name="filePath" value="output.dat" />
+      </task_param>
+   </task>
+</scenario>
+

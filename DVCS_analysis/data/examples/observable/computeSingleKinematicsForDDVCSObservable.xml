@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario demonstrates a simple task as the evaluation of DDVCS observable in a single kinematic point. The result of this scenario is printed out to the standard output. 
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2017-07-18" description="DDVCS observable evaluation for single kinematics example">
+
+   <!-- First task: evaluate DDVCS observable for a single kinematics --> 
+   <!-- Indicate service and its methods to be used --> 
+   <task service="DDVCSObservableService" method="computeSingleKinematic">
+
+      <!-- Define DDVCS observable kinematics -->
+      <kinematics type="DDVCSObservableKinematic">
+         <param name="xB" value="0.2" />
+         <param name="t" value="-0.1" />
+         <param name="Q2" value="2." />
+         <param name="Q2Prim" value="0.5" />
+         <param name="E" value="12." />
+         <param name="phi" value="0.1" />
+         <param name="phiL" value="0.2" />
+         <param name="thetaL" value="0.3" />
+      </kinematics>
+
+      <!-- Define physics assumptions -->
+      <computation_configuration>
+
+         <!-- Select DDVCS observable -->
+         <module type="DDVCSObservableModule" name="DDVCSCrossSectionUUMinus">
+
+            <!-- Select DDVCS process model -->
+            <module type="DDVCSProcessModule" name="DDVCSProcessDMSW22">
+
+               <!-- Select scales module -->
+               <!-- (it is used to evaluate factorization and renormalization scales out of kinematics) -->
+               <module type="DDVCSScalesModule" name="DDVCSScalesVirtualitiesSum">
+               </module>
+
+               <!-- Select xi-converter module -->
+               <!-- (it is used to evaluate GPD variable xi out of kinematics) -->
+               <module type="DDVCSXiConverterModule" name="DDVCSXiConverterTNeglected">
+               </module>
+
+               <!-- Select DDVCS CFF model -->
+               <module type="DDVCSConvolCoeffFunctionModule" name="DDVCSCFFStandard">
+
+                  <!-- Indicate pQCD order of calculation -->
+                  <param name="qcd_order_type" value="LO" />
+
+                  <!-- Select GPD model -->
+                  <module type="GPDModule" name="GPDGK16">
+                  </module>
+
+               </module>
+
+            </module>
+
+         </module>
+
+      </computation_configuration>
+
+   </task>
+
+   <!-- Second task: print results of the last computation into standard output --> 
+   <task service="DDVCSObservableService" method="printResults">
+   </task>
+
+</scenario>

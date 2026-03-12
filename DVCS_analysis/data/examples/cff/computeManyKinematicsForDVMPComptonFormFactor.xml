@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario demonstrates the evaluation of DVMP Compton Form Factors (CFF) for kinematics defined in a text file. In this file kinematic points are encoded in separate lines using the following format: "xi|t|MuF2|MuR2|Q2". The result of this scenario is printed out to the standard output. These are CFF values for all GPD types defined in the selected GPD model. 
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2017-07-18" description="DVMP CFF evaluation for many kinematics example">
+
+   <!-- First task: evaluate DVMP CFF for a single kinematics --> 
+   <!-- Indicate service and its methods to be used --> 
+   <task service="DVMPConvolCoeffFunctionService" method="computeManyKinematic">
+
+      <!-- Define DVMP CFF kinematics -->
+      <kinematics type="DVMPConvolCoeffFunctionKinematic">
+
+         <!-- Path to file defining kinematics -->
+         <param name="file" value="/home/partons/git/partons-example/data/examples/cff/kinematics_dvmp_cff_with_units.csv" />
+      </kinematics>
+
+      <!-- Define physics assumptions -->
+      <computation_configuration>
+
+         <!-- Select DVMP CFF model -->
+         <module type="DVMPConvolCoeffFunctionModule" name="DVMPCFFGK06">
+
+            <!-- Parameters of MC integration -->
+            <param name="nWarmUps" value="10000" />
+            <param name="nCalls" value="100000" />
+            <param name="chi2Limit" value="0.8" />
+
+            <!-- Indicate pQCD order of calculation -->
+            <param name="qcd_order_type" value="LO" />
+
+            <!-- Select GPD model -->
+            <module type="GPDModule" name="GPDGK19">
+            </module>
+
+         </module>
+
+      </computation_configuration>
+
+   </task>
+
+   <!-- Second task: print results of the last computation into standard output --> 
+   <task service="DVMPConvolCoeffFunctionService" method="printResults">
+   </task>
+
+</scenario>

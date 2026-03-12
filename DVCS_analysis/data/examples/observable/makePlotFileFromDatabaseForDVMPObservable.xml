@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario illustrates how to select specific data from the database and write them to a file to be used e.g. for plotting purposes. To run this task you must first fill the database with some results. You can run for instance computeManyKinematicsForDVMPObservable.xml scenario with storeInDB="1". After the successful insertion PARTONS returns to the standard output unique computation_id, which you should use whenever needed to refer the inserted data. 
+
+This scenario uses generatePlotFile task, which defines SELECT...WHERE... SQL-like query. You can play with the following variables:
+
+====================================================================================================================================
+Name                       	Description                           				Type           	Possible values 
+====================================================================================================================================
+xB                         	observable kinematics xB 		     			double
+t                          	observable kinematics t 		    			double
+Q2                         	observable kinematics Q2 	             			double
+E                         	observable kinematics E 	             			double
+phi                         	observable kinematics phi 	             			double
+meson_type_short_name		meson type							char string
+
+value         			observable value 	    					double
+
+computation_id             	Unique id of related computation				integer
+observable_name			Observable name (should be the same as computation_module_name)	char string
+====================================================================================================================================
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2017-07-18" description="Get observable result from database">
+
+   <!-- Task: generate file with data matching indicated criteria --> 
+   <task service="DVMPObservableService" method="generatePlotFile">
+
+      <!-- Variables selected to be stored in the output file -->
+      <task_param type="select">
+         <param name="xPlot" value="xB" />
+         <param name="yPlot" value="value" />
+      </task_param>
+
+      <!-- Applied requirements -->
+      <task_param type="where">
+         <param name="computation_id" value="1" />
+         <param name="observable_name" value="DVMPCrossSectionUUUMinus" />
+      </task_param>
+
+      <!-- Path to the output file -->
+      <task_param type="output">
+         <param name="filePath" value="output.dat" />
+      </task_param>
+   </task>
+</scenario>
+

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario demonstrates the evaluation of GPD model for kinematics defined in a text file. In this file kinematic points are encoded in separate lines using the following format: "x|xi|t|MuF2|MuR2". The result of this scenario is printed out to the standard output. These are the values for all defined in the model GPDs, including singlet and non-singlet combinations for quarks. 
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2017-07-18" description="GPD evaluation for many kinematics example">
+
+   <!-- First task: evaluate GPD model for a single kinematics --> 
+   <!-- Indicate service and its methods to be used --> 
+   <task service="GPDService" method="computeManyKinematic">
+
+      <!-- Define GPD kinematics -->
+      <kinematics type="GPDKinematic">
+
+         <!-- Path to file defining kinematics -->
+         <param name="file" value="/home/partons/git/partons-example/data/examples/gpd/kinematics_gpd.csv" />
+      </kinematics>
+
+      <!-- Define physics assumptions -->
+      <computation_configuration>
+
+         <!-- Select GPD model -->
+         <module type="GPDModule" name="GPDGK16">
+         </module>
+
+      </computation_configuration>
+
+   </task>
+
+   <!-- Second task: print results of the last computation into standard output --> 
+   <task service="GPDService" method="printResults">
+   </task>
+
+</scenario>

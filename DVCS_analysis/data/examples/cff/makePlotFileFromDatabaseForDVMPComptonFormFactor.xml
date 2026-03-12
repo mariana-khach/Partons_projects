@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario illustrates how to select specific data from the database and write them to a file to be used e.g. for plotting purposes. To run this task you must first fill the database with some results. You can run for instance computeManyKinematicsForDVMPComptonFormFactor.xml scenario with storeInDB="1". After the successful insertion PARTONS returns to the standard output unique computation_id, which you should use whenever needed to refer the inserted data. 
+
+This scenario uses generatePlotFile task, which defines SELECT...WHERE... SQL-like query. You can play with the following variables:
+
+===============================================================================================================================
+Name                       	Description                           	Type           	Possible values 
+===============================================================================================================================
+xi                         	CFF kinematics xi 		     	double
+t                          	CFF kinematics t 		    	double
+MuF2                       	CFF kinematics MuF2 	             	double
+MuR2                       	CFF kinematics MuR2 	             	double
+Q2                         	CFF kinematics Q2 	             	double
+meson_type_id			Meson type				int
+polarization_type_id		Polarization type			int
+
+real_part         	   	CFF value real part 	    		double
+img_part    		   	CFF singlet imaginary part   		double
+
+computation_id             	Unique id of related computation	integer
+computation_module_name    	Name of CFF module used in computation  char string
+gpd_type_short_name        	GPD type 				char string    	H, E, etc. see GPDType::Type
+observable_channel_short_name	Channel type				char string	DVMP, HEMP, see ObservableChannel::Type
+===============================================================================================================================
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2017-07-18" description="Get CFF result from database">
+
+   <!-- Task: generate file with data matching indicated criteria --> 
+   <task service="DVMPConvolCoeffFunctionService" method="generatePlotFile">
+
+      <!-- Variables selected to be stored in the output file -->
+      <task_param type="select">
+         <param name="xPlot" value="xi" />
+         <param name="yPlot" value="real_part" />
+      </task_param>
+
+      <!-- Applied requirements -->
+      <task_param type="where">
+         <param name="computation_id" value="1" />
+         <param name="gpd_type_short_name" value="H" />
+      </task_param>
+
+      <!-- Path to the output file -->
+      <task_param type="output">
+         <param name="filePath" value="output.dat" />
+      </task_param>
+   </task>
+</scenario>
+

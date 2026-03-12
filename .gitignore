@@ -1,0 +1,29 @@
+# compiled objects
+*.o
+*.so
+*.dylib
+*.exe
+
+# ROOT files
+*.root
+
+# build directories
+/numa/
+/partons/
+/elementary-utils/
+/partons-example/
+DVCS_analysis/build/
+DVCS_analysis/libtorch
+
+
+
+# macOS files
+.DS_Store
+
+# editor files
+#*.swp
+#*.swo
+
+
+# temporary files
+*~

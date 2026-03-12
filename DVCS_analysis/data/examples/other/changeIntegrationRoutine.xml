@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario demonstrates how to change the integration routine in one of modules. To make it possible, the module must inherit from MathIntegratorModule class (our doxygen documentation will tell you that). 
+
+Be careful when you perform this operation. Some integration routines may speed up computations, but at the same time they can be not accurate enough to be applied in some kinematic ranges (e.g. in low xB). The infinities are also treated differently by various integration routines (or they are not treated at all).  
+
+This scenario is the demonstration for GPD module. Note however that the way of changing the integration routine that is presented here is applicable to any type of PARTONS module.
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2017-07-18" description="Change integration routine example">
+
+   <!-- First task: evaluate GPD model for a single kinematics --> 
+   <!-- Indicate service and its methods to be used --> 
+   <task service="GPDService" method="computeSingleKinematic">
+
+      <!-- Define GPD kinematics -->
+      <kinematics type="GPDKinematic">
+         <param name="x" value="0.1" />
+         <param name="xi" value="0.2" />
+         <param name="t" value="-0.1" />
+         <param name="MuF2" value="2." />
+         <param name="MuR2" value="2." />
+      </kinematics>
+
+      <!-- Define physics assumptions -->
+      <computation_configuration>
+
+         <!-- Select GPD model -->
+         <module type="GPDModule" name="GPDGK16Numerical">
+   
+            <!-- Change integration routine -->
+            <param name="integrator_type" value="GK21_ADAPTIVE" />
+
+         </module> 
+
+      </computation_configuration>
+
+   </task>
+
+   <!-- Second task: print results of the last computation into standard ouput --> 
+   <task service="GPDService" method="printResults">
+   </task>
+
+</scenario>

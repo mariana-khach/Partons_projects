@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario demonstrates a simple task as the evaluation of
+collinear distribution model in a single kinematic point making use of
+collinear distribution evolution. The result of this scenario is
+printed out to the standard output. These are the values for all
+defined in the collinear distribution models, including singlet and
+non-singlet combinations for quarks. Note that you can use this way of
+configuration to include the collinear distribution evolution in any
+calculation of CFFs or observables.
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2020-07-27" description="collinear distribution evaluation for single kinematics example with evolution">
+
+   <!-- First task: evaluate collinear distribution model for a single kinematics --> 
+   <!-- Indicate service and its methods to be used --> 
+   <task service="CollinearDistributionService" method="computeSingleKinematic">
+
+      <!-- Define collinear distribution kinematics -->
+      <kinematics type="CollinearDistributionKinematic">
+         <param name="x" value="0.1" />
+         <param name="MuF2" value="100." />
+         <param name="MuR2" value="100." />
+      </kinematics>
+
+      <!-- Define physics assumptions -->
+       <computation_configuration>
+
+         <!-- Select collinear distribution model -->
+         <module type="CollinearDistributionModule" name="CollinearDistributionLHAPDF">
+
+            <!-- Indicate name of the LHAPDF set -->
+            <param name="setName" value="CT14nnlo" />
+
+	    <!-- Declare distrubution type -->
+            <param name="setType" value="UnpolPDF"/>
+
+	    <!-- Select collinear distribution evolution model -->
+            <module type="CollinearDistributionEvolutionModule" name="CollinearDistributionEvolutionApfel">
+
+               <param name="qcd_order_type" value="NNLO" />
+               <param name="collinear_distribution_type" value="UnpolPDF" />
+
+	       <!-- Select alpha_s model -->
+               <module type="RunningAlphaStrongModule" name="RunningAlphaStrongApfel">
+                  <param name="qcd_order_type" value="NNLO" />
+		  <param name="alphasRef" value="0.118" />
+		  <param name="muRef" value="91.1876" />
+		  <param name="thresholds" value="0 0 0 1.3 4.75 172" />
+               </module>
+
+               <module type="ActiveFlavorsThresholdsModule" name="ActiveFlavorsThresholdsVariable">
+                 <param name="thresholds" value="0 0 0 1.3 4.75 172" />
+               </module>
+
+            </module>
+
+         </module>
+
+      </computation_configuration>
+
+   </task>
+
+   <!-- Second task: print results of the last computation into standard output --> 
+   <task service="CollinearDistributionService" method="printResults">
+   </task>
+
+</scenario>

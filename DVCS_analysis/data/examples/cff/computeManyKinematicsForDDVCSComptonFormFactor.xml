@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<!--
+This scenario demonstrates the evaluation of DDVCS Compton Form Factors (CFF) for kinematics defined in a text file. In this file kinematic points are encoded in separate lines using the following format: "xi|t|MuF2|MuR2|Q2". The result of this scenario is printed out to the standard output. These are CFF values for all GPD types defined in the selected GPD model. 
+-->
+
+<!-- Scenario starts here -->
+<!-- For your convenience and for bookkeeping provide creation date and unique description -->
+<scenario date="2017-07-18" description="DDVCS CFF evaluation for many kinematics example">
+
+   <!-- First task: evaluate DDVCS CFF for a single kinematics --> 
+   <!-- Indicate service and its methods to be used --> 
+   <task service="DDVCSConvolCoeffFunctionService" method="computeManyKinematic">
+
+      <!-- Define DDVCS CFF kinematics -->
+      <kinematics type="DDVCSConvolCoeffFunctionKinematic">
+
+         <!-- Path to file defining kinematics -->
+         <param name="file" value="/home/partons/git/partons-example/data/examples/cff/kinematics_ddvcs_cff.csv" />
+      </kinematics>
+
+      <!-- Define physics assumptions -->
+      <computation_configuration>
+
+         <!-- Select DDVCS CFF model -->
+         <module type="DDVCSConvolCoeffFunctionModule" name="DDVCSCFFStandard">
+
+            <!-- Indicate pQCD order of calculation -->
+            <param name="qcd_order_type" value="LO" />
+
+            <!-- Select GPD model -->
+            <module type="GPDModule" name="GPDGK16">
+            </module>
+
+         </module>
+
+      </computation_configuration>
+
+   </task>
+
+   <!-- Second task: print results of the last computation into standard output --> 
+   <task service="DDVCSConvolCoeffFunctionService" method="printResults">
+   </task>
+
+</scenario>
