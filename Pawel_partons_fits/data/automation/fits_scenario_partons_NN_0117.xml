@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<scenario date="2017-10-09" description="Fits with NN">
+
+    <!-- 1st step : configure random generator -->
+
+    <task service="FitsService" method="configureRandomGenerator">
+        <kinematics type="seed">
+            <param name="value" value="1000000" />
+        </kinematics>
+    </task>
+
+    <!-- 2nd step : define kinematic cuts, several kinematic cuts should 
+        be separated by semicolon -->
+
+    <task service="FitsService" method="defineKinematicCuts">
+        <kinematics type="kinematicCuts">
+     		<param name="list" value="-t/Q2 lt 0.2; Q2 gt 1.5" /> 
+        </kinematics>
+    </task>
+
+    <!-- 3th step : configure your DVCS channel from Process layer to GPD 
+        layer -->
+
+    <task service="FitsService" method="configureDVCSChannel">
+        <computation_configuration>
+            <module type="ProcessModule" name="DVCSProcessGV08">
+
+                <module type="ScalesModule" name="ScalesQ2Multiplier">
+                    <param name="lambda" value="1" />
+                </module>
+
+                <module type="XiConverterModule" name="XiConverterXBToXi">
+                </module>
+
+                <module type="ConvolCoeffFunctionModule" name="DVCSCFFNNModel">
+                </module>
+            </module>
+        </computation_configuration>
+    </task>
+
+    <!-- 4th step : write your custom SQL query to select your observables -->
+
+    <task service="FitsService" method="selectObservables">
+        <kinematics type="ObservableResult">
+		<param name="SQLQuery" value="SELECT * FROM observable_result WHERE (observable_result_id BETWEEN 1 AND 497);" /> 
+		<param name="MakeReplica" value="0" />
+		<param name="MakeRandom" value="1" />
+		<param name="MakeRandomFraction" value="0.75" />
+        </kinematics>
+    </task>
+
+    <!-- 5th step : select your FitsModel that init model parameter and change 
+        it after minimization -->
+
+    <task service="FitsService" method="configureFitsModule">
+        <computation_configuration>
+            <module type="FitsModelModule" name="Partons0117NNFitsModel">
+            </module>
+        </computation_configuration>
+    </task>
+
+    <!-- 6th step : select your MinimizerModel -->
+
+    <task service="FitsService" method="configureMinimizerModule">
+        <computation_configuration>
+            <module type="MinimizerModule" name="GeneticAlgorithmMinimizer">
+
+		<param name="ga_minimizer_dump_best_to_file_every" value="1" />
+		<param name="ga_minimizer_dump_best_to_file_path" value="drop_best.dat" />
+		<param name="ga_minimizer_dump_population_to_file_every" value="0" />
+		<param name="ga_minimizer_dump_population_to_file_path" value="drop_population.dat" />
+
+		<param name="ga_minimizer_population_size_min" value="500" />
+		<param name="ga_minimizer_population_size_max" value="1000" />
+		<param name="ga_minimizer_population_size_slope" value="0.1" />
+		<param name="ga_minimizer_cross_slope" value="0." />
+		<param name="ga_minimizer_mutation_A_prob_max" value="0.00025" />
+		<param name="ga_minimizer_mutation_B_prob_max" value="0.00005" />
+		<param name="ga_minimizer_mutation_A_slope" value="-0.005" />
+		<param name="ga_minimizer_mutation_B_slope" value="-0.005" />
+
+		<param name="ga_minimizer_min_precision_sampling" value="1000" />
+		<param name="ga_minimizer_max_iterations" value="1000" />
+            </module>
+        </computation_configuration>
+    </task>
+
+    <!-- 7th step : run computation -->
+
+    <task service="FitsService" method="compute">
+    </task>
+
+    <!-- 8th step : write output -->
+
+    <task service="FitsService" method="writeOutput">
+        <kinematics type="outputFile">
+            <param name="path" value="output_NN.xml" />
+        </kinematics>
+    </task>
+
+</scenario>

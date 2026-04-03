@@ -1,0 +1,52 @@
+/*
+ * TrainingAlgorithmGenetic.h
+ *
+ *  Created on: Apr 23, 2016
+ *      Author: Pawel Sznajder
+ */
+
+#ifndef TRAININGALGORITHMGENETIC_H_
+#define TRAININGALGORITHMGENETIC_H_
+
+#include <map>
+#include <vector>
+
+#include "../../genetic_algorithm/GeneticAlgorithm.h"
+#include "../beans/Data.h"
+#include "../beans/TrainingFunctionType.h"
+#include "TrainingAlgorithm.h"
+
+class TrainingAlgorithmGenetic: public TrainingAlgorithm {
+
+public:
+
+    static const unsigned int classId;
+
+    TrainingAlgorithmGenetic();
+    ~TrainingAlgorithmGenetic();
+    virtual TrainingAlgorithmGenetic* clone() const;
+
+    virtual void train(const NeuralNetwork& nn, const Data& input,
+            const Data& output, TrainingFunctionType::Type trainingFunctionType,
+            const std::vector<double>& parameters);
+
+    void evaluatePopulation(const NeuralNetwork& nn, const Data& input,
+            const Data& output, TrainingFunctionType::Type trainingFunctionType,
+            const std::vector<double>& parameters,
+            GeneticAlgorithm& geneticAlgorithm) const;
+
+protected:
+
+    TrainingAlgorithmGenetic(const TrainingAlgorithmGenetic& other);
+    
+private:
+
+    enum Type {
+        UNDEFINED = 0, NeuronObject = 1, PerceptronObject = 2
+    };
+
+    //TODO If the factory is used, what is the life cycle of this member?
+    std::map<void*, TrainingAlgorithmGenetic::Type> m_map;
+};
+
+#endif /* TRAININGALGORITHMGENETIC_H_ */

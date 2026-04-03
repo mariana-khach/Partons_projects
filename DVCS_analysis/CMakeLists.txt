@@ -75,6 +75,16 @@ list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/dcgan.cpp)
 # exclude ObsCalc_CFFNNReplicas.cpp from the main executable (it has its own main)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/ObsCalc_CFFNNReplicas.cpp)
 
+# exclude NN_CFF_fit.cpp from the main executable (it has its own main)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NN_CFF_fit.cpp)
+
+# exclude NNFit library sources from the main executable (they use libtorch)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/NN_Fit.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/CFF_NN_Fit.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/DVCSCFFNNPytorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/Run_CFF_NN_Fit.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/nn_bsa.cpp)
+
 # define target executable
 set(EXECUTABLE_OUTPUT_PATH ${CMAKE_CURRENT_SOURCE_DIR}/bin)
 
@@ -127,7 +137,48 @@ target_link_libraries(
 )
 set_property(TARGET ObsCalc_CFFNNReplicas PROPERTY CXX_STANDARD 17)
 
+# NN_CFF_fit executable
+add_executable(NN_CFF_fit src/NN_CFF_fit.cpp src/NNFit/NN_Fit.cpp)
+target_include_directories(NN_CFF_fit PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(
+	NN_CFF_fit
+	${SFML_LIBRARIES}
+	${CLN_LIBRARIES}
+	${ElementaryUtils_LIBRARIES}
+	${NumA++_LIBRARIES}
+	${PARTONS_LIBRARIES}
+	${GSL_LIBRARIES}
+	${Apfel++_LIBRARIES}
+	${LHAPDF_LIBRARIES}
+	${LIBXML2_LIBRARIES}
+	"${TORCH_LIBRARIES}"
+)
+set_property(TARGET NN_CFF_fit PROPERTY CXX_STANDARD 17)
+
+# Run_CFF_NN_Fit executable
+add_executable(Run_CFF_NN_Fit src/Run_CFF_NN_Fit.cpp src/NNFit/CFF_NN_Fit.cpp src/NNFit/DVCSCFFNNPytorch.cpp)
+target_include_directories(Run_CFF_NN_Fit PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(
+	Run_CFF_NN_Fit
+	${SFML_LIBRARIES}
+	${CLN_LIBRARIES}
+	${ElementaryUtils_LIBRARIES}
+	${NumA++_LIBRARIES}
+	${PARTONS_LIBRARIES}
+	${GSL_LIBRARIES}
+	${Apfel++_LIBRARIES}
+	${LHAPDF_LIBRARIES}
+	${LIBXML2_LIBRARIES}
+	"${TORCH_LIBRARIES}"
+)
+set_property(TARGET Run_CFF_NN_Fit PROPERTY CXX_STANDARD 17)
+
 # dcgan executable (libtorch test)
 add_executable(dcgan src/dcgan.cpp)
 target_link_libraries(dcgan "${TORCH_LIBRARIES}")
 set_property(TARGET dcgan PROPERTY CXX_STANDARD 17)
+
+# nn_bsa executable: NN trained on BSA CLAS15 data
+add_executable(nn_bsa src/nn_bsa.cpp)
+target_link_libraries(nn_bsa "${TORCH_LIBRARIES}")
+set_property(TARGET nn_bsa PROPERTY CXX_STANDARD 17)

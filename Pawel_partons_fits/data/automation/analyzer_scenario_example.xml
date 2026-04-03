@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+
+<scenario date="2016-04-14" description="How to use automation to analyze fit output">
+
+    <!-- 1st step : configure FitsService -->
+
+    <task service="FitsAnalyzerService" method="configureFitService">
+        <kinematics type="files">
+            <param name="fitInputFile" value="data/automation/fits_scenario_partons_0117.xml" />   
+            <param name="fitOutputFile" value="data/output_example/fits_scenario_partons_0117.output.xml" />   
+        </kinematics>
+    </task>
+
+   <!-- 2Ath step : evaluate CFFs -->
+
+   <task service="FitsAnalyzerService" method="evaluateCFF">
+        <kinematics type="evaluateDVCSCFFAsFunctionOfXi">
+            <param name="t" value="-0.3" />   
+            <param name="Q2" value="2." />   
+            <param name="muF2" value="2." />   
+            <param name="muR2" value="2." />   
+
+	    <param name="nSteps" value="2" />
+	    <param name="isLog" value="1" />
+	    <param name="rangeMin" value="1.E-2" />
+	    <param name="rangeMax" value="0.8" />
+	    <param name="resultOutputFile" value="cff.dat" />
+        </kinematics>
+   </task>
+
+   <!-- 2Bth step : evaluate observable -->
+
+   <task service="FitsAnalyzerService" method="evaluateObservable">
+        <kinematics type="evaluateDVCSObservableAsFunctionOfPhi">
+	    <param name="observableName" value="All" />
+
+            <param name="xB" value="0.3" />   
+            <param name="t" value="-0.3." />   
+            <param name="Q2" value="2." />   
+            <param name="E" value="6." />   
+
+	    <param name="nSteps" value="2" />
+	    <param name="isLog" value="0" />
+	    <param name="rangeMin" value="0." />
+	    <param name="rangeMax" value="360." />
+	    <param name="resultOutputFile" value="observable.dat" />
+        </kinematics>
+    </task>
+
+   <!-- 2Cth step : evaluate chi2 1D shape -->
+
+   <task service="FitsAnalyzerService" method="evaluateChi21D">
+        <kinematics type="parameter">
+	    <param name="name" value="par_Ht_a_Sea" />
+
+	    <param name="nSteps" value="2" />
+	    <param name="isLog" value="0" />
+	    <param name="rangeMin" value="0." />
+	    <param name="rangeMax" value="4." />
+	    <param name="resultOutputFile" value="chi21D.dat" />
+        </kinematics>
+    </task>
+
+   <!-- 2Dth step : evaluate chi2 2D shape -->
+
+   <task service="FitsAnalyzerService" method="evaluateChi22D">
+        <kinematics type="parameter">
+	    <param name="name1" value="par_Ht_a_Val" />
+	    <param name="name2" value="par_Ht_a_Sea" />
+
+	    <param name="nSteps1" value="1" />
+	    <param name="isLog1" value="0" />
+	    <param name="rangeMin1" value="1." />
+	    <param name="rangeMax1" value="4." />
+
+	    <param name="nSteps2" value="1" />
+	    <param name="isLog2" value="0" />
+	    <param name="rangeMin2" value="0." />
+	    <param name="rangeMax2" value="4." />
+
+	    <param name="resultOutputFile" value="chi22D.dat" />
+        </kinematics>
+    </task>
+
+
+
+</scenario>

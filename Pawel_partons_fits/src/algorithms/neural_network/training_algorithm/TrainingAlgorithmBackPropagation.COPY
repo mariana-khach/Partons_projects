@@ -1,0 +1,292 @@
+/*
+ * TrainingAlgorithmBackPropagation.cpp
+ *
+ *  Created on: Apr 23, 2016
+ *      Author: Pawel Sznajder
+ */
+
+#include "../../../include/neural_network/training_algorithm/TrainingAlgorithmBackPropagation.h"
+
+#include <cstdio>
+#include <iterator>
+#include <map>
+#include <utility>
+
+#include "../../../include/common_objects/BaseObjectRegistry.h"
+#include "../../../include/neural_network/beans/NeuralNetworkCellPropertyType.h"
+#include "../../../include/neural_network/beans/NeuralNetworkCellType.h"
+#include "../../../include/neural_network/beans/TrainingAlgorithmType.h"
+#include "../../../include/neural_network/neural_network/NeuralNetwork.h"
+#include "../../../include/neural_network/neural_network_cell/OutputCell.h"
+#include "../../../include/neural_network/neural_network_cell/Perceptron.h"
+#include "../../../include/neural_network/neural_network_layer/NeuralNetworkLayer.h"
+#include "../../../include/neural_network/neural_network_neuron/NeuralNetworkNeuron.h"
+#include "../../../include/neural_network/training_function/TrainingFunction.h"
+
+const unsigned int TrainingAlgorithmBackPropagation::classId =
+		BaseObjectRegistry::getInstance()->registerTrainingAlgorithm(
+				TrainingAlgorithmType::BackPropagation, new TrainingAlgorithmBackPropagation());
+
+TrainingAlgorithmBackPropagation::TrainingAlgorithmBackPropagation() :
+		TrainingAlgorithm("TrainingAlgorithmBackPropagation") {
+}
+
+TrainingAlgorithmBackPropagation::~TrainingAlgorithmBackPropagation() {
+}
+
+void TrainingAlgorithmBackPropagation::train(const NeuralNetwork& nn, const Data& input,
+		const Data& output, TrainingFunctionType::Type trainingFunctionType,
+		const std::vector<double>& parameters) {
+
+	//parameters
+	if (parameters.size() != 2) {
+		throwError(__func__, "Wrong number of input parameters");
+	}
+
+	const double trainingFactor = parameters.at(0);
+
+	if (trainingFactor <= 0. || trainingFactor > 1.) {
+		throwError(__func__, "Training factor smaller/equal zero or larger than one");
+	}
+
+	const unsigned int maxEpoh = int(parameters.at(1));
+
+	if (maxEpoh == 0) {
+		throwError(__func__, "Max EPOH is zero");
+	}
+
+	//result of training for this epoch  will be stored in these maps and applied later
+	std::map<Perceptron*, double> correctionForBiases;
+	std::map<NeuralNetworkNeuron*, double> correctionForWeights;
+
+	//loop over Epoh
+	for (unsigned int iEpoh = 0; iEpoh < maxEpoh; iEpoh++) {
+
+		//forward propagation
+		Data outputForward = nn.evaluate(input);
+
+		//calculate value of training function
+		double trainingFunctionValue = BaseObjectRegistry::getInstance()->getTrainingFunction(
+				trainingFunctionType)->evaluate(outputForward, output);
+
+		//calulate improvment of training function
+		double trainingFunctionImprovment = calculateImprovment(trainingFunctionValue);
+
+		//print status
+		printf("EPOCH: %5u\tTFV: %10.2E IMP: %10.2E\n", iEpoh, trainingFunctionValue,
+				trainingFunctionImprovment);
+
+		//improve weights
+		std::vector<NeuralNetworkNeuron*>::const_iterator itNeuron;
+
+		//iterators
+		std::vector<NeuralNetworkLayer*>::const_reverse_iterator itLayer;
+		std::vector<NeuralNetworkCell*>::const_iterator itCell;
+
+		int j;
+
+		//loop over events
+		for (unsigned int i = 0; i < output.getN(); i++) {
+
+			 outputForward = nn.evaluate(input);
+
+			//loop over layers
+			for (itLayer = nn.getNeuralNetworkLayers().rbegin();
+					itLayer != nn.getNeuralNetworkLayers().rend(); itLayer++) {
+
+				//set input parameters for the first layer
+				if (itLayer == nn.getNeuralNetworkLayers().rbegin()) {
+
+					//loop over output cells
+					for (itCell = ((*itLayer)->getCells()).begin(), j = 0;
+							itCell != ((*itLayer)->getCells()).end(); itCell++, j++) {
+
+						//check if output cell
+						if ((*itCell)->getType() != NeuralNetworkCellType::OutputCell) {
+							throwError(__func__, "No output cell when expected");
+						}
+
+						//set partial derivative
+						(static_cast<OutputCell*>(*itCell))->setOutput(
+								BaseObjectRegistry::getInstance()->getTrainingFunction(trainingFunctionType)->partialDerivative(
+										i, j, outputForward, output));
+					}
+
+				} else {
+
+					//evaluate backward
+					for (itCell = ((*itLayer)->getCells()).begin();
+							itCell != ((*itLayer)->getCells()).end(); itCell++) {
+
+						double result = 0.;
+
+						for (itNeuron = (*itCell)->getNeuronsOut().begin();
+								itNeuron != (*itCell)->getNeuronsOut().end(); itNeuron++) {
+
+							result += (*itNeuron)->getNeuralNetworkCellOut()->evaluateDerivativeBackward(
+									*itNeuron) * (*itNeuron)->getNeuralNetworkCellOut()->getOutput();
+						}
+
+						(*itCell)->setOutput(result);
+					}
+
+					//correct bias and weight for perceptrons
+					for (itCell = ((*itLayer)->getCells()).begin();
+							itCell != ((*itLayer)->getCells()).end(); itCell++) {
+
+						//check if needs training
+						if (int(
+								(*itCell)->checkProperty(
+										NeuralNetworkCellPropertyType::DoNotRequiresTraining))
+								+ int(
+										(*itCell)->checkProperty(
+												NeuralNetworkCellPropertyType::RequiresTraining)) != 1) {
+							throwError(__func__, "No or too many properties related to training");
+						}
+
+						if ((*itCell)->checkProperty(NeuralNetworkCellPropertyType::RequiresTraining)
+								&& ((*itCell)->getType() != NeuralNetworkCellType::Perceptron)) {
+							throwError(__func__, "Training not provided for this cell");
+						}
+
+						//check if perceptron
+						if ((*itCell)->getType() != NeuralNetworkCellType::Perceptron) {
+
+							//check if neurons need training
+							for (itNeuron = (*itCell)->getNeuronsIn().begin();
+									itNeuron != (*itCell)->getNeuronsIn().end(); itNeuron++) {
+
+								if (!(*itNeuron)->isWeightFixed()) {
+									throwError(__func__,
+											"Neuron needs training but it is not connected to percepptron");
+								}
+							}
+
+							//continue
+							continue;
+						}
+
+						//perceptron
+						Perceptron* perceptron = (static_cast<Perceptron*>(*itCell));
+
+						//first derivative of activation function
+						double firstDerivatieOfActivationFunction =
+								perceptron->evaluateFirstDerivatieOfActivationFunction();
+
+						//calculate corrections for biases
+						if (!perceptron->isBiasFixed()) {
+
+							//pointer to the map
+							std::map<Perceptron*, double>::iterator pMapBias = correctionForBiases.find(
+									perceptron);
+
+							//if not found
+							if (pMapBias == correctionForBiases.end())
+								pMapBias = correctionForBiases.insert(std::make_pair(perceptron, 0.)).first;
+
+							//zero
+							if (i == 0) {
+								pMapBias->second = 0.;
+							}
+
+							//apply correction
+							pMapBias->second +=
+									perceptron->getOutput() * firstDerivatieOfActivationFunction
+											* perceptron->evaluateFirstPartialDerivatieOfCombinationFunctionForBias();
+						}
+
+						//calculate corrections for weights
+						for (itNeuron = perceptron->getNeuronsIn().begin();
+								itNeuron != perceptron->getNeuronsIn().end(); itNeuron++) {
+
+							if ((*itNeuron)->isWeightFixed())
+								continue;
+
+							//pointer to the map
+							std::map<NeuralNetworkNeuron*, double>::iterator pMapNeuron =
+									correctionForWeights.find(*itNeuron);
+
+							//if not found
+							if (pMapNeuron == correctionForWeights.end())
+								pMapNeuron =
+										correctionForWeights.insert(std::make_pair(*itNeuron, 0.)).first;
+
+							//zero
+							if (i == 0) {
+								pMapNeuron->second = 0.;
+							}
+
+							printf("weight: before: %f add: %f\n", pMapNeuron->second,
+									perceptron->getOutput() * firstDerivatieOfActivationFunction
+											* perceptron->evaluateFirstPartialDerivatieOfCombinationFunctionForNeuron(
+													*itNeuron));
+
+							//apply correction
+							pMapNeuron->second +=
+									perceptron->getOutput() * firstDerivatieOfActivationFunction
+											* perceptron->evaluateFirstPartialDerivatieOfCombinationFunctionForNeuron(
+													*itNeuron);
+						}
+					}
+				}
+			}
+		}
+
+		//apply corrections
+		std::map<Perceptron*, double>::iterator it1;
+		std::map<NeuralNetworkNeuron*, double>::iterator it2;
+
+		for (it1 = correctionForBiases.begin(); it1 != correctionForBiases.end(); it1++) {
+			(it1->first)->setBias((it1->first)->getBias() - trainingFactor * (it1->second));
+		}
+
+		for (it2 = correctionForWeights.begin(); it2 != correctionForWeights.end(); it2++) {
+			(it2->first)->setWeight((it2->first)->getWeight() - trainingFactor * (it2->second));
+		}
+	}
+}
+
+double TrainingAlgorithmBackPropagation::calculateImprovment(double trainingFunctionValue) const {
+
+	//container
+	static std::vector<double> data;
+
+	//size of container
+	const unsigned int containerSize = 1;
+
+	//calculate average
+	double average = 0.;
+
+	if (data.size() == 0) {
+
+		if (data.size() < containerSize) {
+			data.push_back(trainingFunctionValue);
+		} else {
+			data.erase(data.begin());
+			data.push_back(trainingFunctionValue);
+		}
+
+		return 1.;
+
+	} else {
+
+		std::vector<double>::iterator it;
+
+		for (it = data.begin(); it != data.end(); it++) {
+			average += *it;
+		}
+
+		average /= double(data.size());
+
+		if (data.size() < containerSize) {
+			data.push_back(trainingFunctionValue);
+		} else {
+			data.erase(data.begin());
+			data.push_back(trainingFunctionValue);
+		}
+
+		return (average - trainingFunctionValue) / average;
+
+	}
+
+}

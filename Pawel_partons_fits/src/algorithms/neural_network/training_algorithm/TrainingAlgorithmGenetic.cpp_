@@ -1,0 +1,228 @@
+/*
+ * TrainingAlgorithmGenetic.cpp
+ *
+ *  Created on: Apr 23, 2016
+ *      Author: Pawel Sznajder
+ */
+
+#include "../../../../include/algorithms/neural_network/training_algorithm/TrainingAlgorithmGenetic.h"
+
+#include <ElementaryUtils/logger/CustomException.h>
+#include <partons/BaseObjectRegistry.h>
+#include <iterator>
+#include <utility>
+
+#include "../../../../include/algorithms/neural_network/beans/NeuralNetworkCellPropertyType.h"
+#include "../../../../include/algorithms/neural_network/beans/NeuralNetworkCellType.h"
+#include "../../../../include/algorithms/neural_network/beans/TrainingAlgorithmType.h"
+#include "../../../../include/algorithms/neural_network/neural_network/NeuralNetwork.h"
+#include "../../../../include/algorithms/neural_network/neural_network_cell/Perceptron.h"
+#include "../../../../include/algorithms/neural_network/neural_network_neuron/NeuralNetworkNeuron.h"
+
+const unsigned int TrainingAlgorithmGenetic::classId =
+        NeuralNetworkTypeRegistry::getInstance()->registerTrainingAlgorithm(
+                TrainingAlgorithmType::GeneticAlgorithm,
+                new TrainingAlgorithmGenetic());
+
+TrainingAlgorithmGenetic::TrainingAlgorithmGenetic() :
+        TrainingAlgorithm("TrainingAlgorithmGenetic") {
+
+    m_map.clear();
+}
+
+TrainingAlgorithmGenetic::~TrainingAlgorithmGenetic() {
+}
+
+void TrainingAlgorithmGenetic::train(const NeuralNetwork& nn, const Data& input,
+        const Data& output, TrainingFunctionType::Type trainingFunctionType,
+        const std::vector<double>& parameters) {
+
+    //parameters
+    if (parameters.size() != 1) {
+        throw ElemUtils::CustomException(getClassName(), __func__,
+                "Wrong number of input parameters");
+    }
+
+    unsigned int maxEpoh = int(parameters.at(0));
+
+    if (maxEpoh == 0) {
+        throw ElemUtils::CustomException(getClassName(), __func__, "Max EPOH negative or zero");
+    }
+
+    //set GA
+    GeneticAlgorithm geneticAlgorithm;
+
+    //print parameters
+    geneticAlgorithm.printParameters();
+
+    //neurons
+    std::vector<NeuralNetworkNeuron*>::const_iterator itNeuron;
+
+    for (itNeuron = nn.getNeuralNetworkNeurons().begin();
+            itNeuron != nn.getNeuralNetworkNeurons().end(); itNeuron++) {
+
+        //check if fixed
+        if ((*itNeuron)->isWeightFixed())
+            continue;
+
+        //add to map
+        m_map.insert(
+                std::make_pair(*itNeuron,
+                        TrainingAlgorithmGenetic::NeuronObject));
+
+        //add variable
+        geneticAlgorithm.addVariable(
+                "neuron_"
+                        + Formatter::convert(
+                                int(
+                                        itNeuron
+                                                - nn.getNeuralNetworkNeurons().begin())),
+                -1., 1., 100);
+    }
+
+    //cells
+    std::vector<NeuralNetworkCell*>::const_iterator itCell;
+
+    for (itCell = nn.getNeuralNetworkCells().begin();
+            itCell != nn.getNeuralNetworkCells().end(); itCell++) {
+
+        //check if needs training
+        if (int(
+                (*itCell)->checkProperty(
+                        NeuralNetworkCellPropertyType::DoNotRequiresTraining))
+                + int(
+                        (*itCell)->checkProperty(
+                                NeuralNetworkCellPropertyType::RequiresTraining))
+                != 1) {
+            throw ElemUtils::CustomException(getClassName(), __func__,
+                    "No or too many properties related to training");
+        }
+
+        if ((*itCell)->checkProperty(
+                NeuralNetworkCellPropertyType::RequiresTraining)
+                && ((*itCell)->getType() != NeuralNetworkCellType::Perceptron)) {
+            throw ElemUtils::CustomException(getClassName(), __func__,
+                    "Training not provided for this cell");
+        }
+
+        //check if perceptron
+        if ((*itCell)->getType() != NeuralNetworkCellType::Perceptron) {
+            continue;
+        }
+
+        //perceptron
+        Perceptron* perceptron = (static_cast<Perceptron*>(*itCell));
+
+        //check if fixed
+        if (perceptron->isBiasFixed())
+            continue;
+
+        //add to map
+        m_map.insert(
+                std::make_pair(perceptron,
+                        TrainingAlgorithmGenetic::PerceptronObject));
+
+        //add variable
+        geneticAlgorithm.addVariable(
+                "bias_"
+                        + Formatter::convert(
+                                int(
+                                        itCell
+                                                - nn.getNeuralNetworkCells().begin())),
+                -1., 1., 100);
+    }
+
+    //set initial population
+    geneticAlgorithm.setInitialPopulation();
+
+    for (unsigned int i = 0; i < maxEpoh; i++) {
+        //run
+        evaluatePopulation(nn, input, output, trainingFunctionType, parameters,
+                geneticAlgorithm);
+
+        //do segregation, cross-over, mutation
+        geneticAlgorithm.runIterationForNeuralNetwork();
+    }
+}
+
+void TrainingAlgorithmGenetic::evaluatePopulation(const NeuralNetwork& nn,
+        const Data& input, const Data& output,
+        TrainingFunctionType::Type trainingFunctionType,
+        const std::vector<double>& parameters,
+        GeneticAlgorithm& geneticAlgorithm) const {
+
+    //check if not zero
+    if (geneticAlgorithm.getGenotypeSize() == 0) {
+        throw ElemUtils::CustomException(getClassName(), __func__, "Genotype size is zero");
+    }
+
+    //check if not zero
+    if (geneticAlgorithm.getPopulationSize() == 0) {
+        throw ElemUtils::CustomException(getClassName(), __func__, "Population is empty");
+    }
+
+    //check if population size is the same as the number of declared parameters
+    if (geneticAlgorithm.getGenotypeSize() != (m_map.size())) {
+        throw ElemUtils::CustomException(getClassName(), __func__,
+                "Population size different then number of neurons and perceptrons");
+    }
+
+    //loop over genotype
+    std::vector<GeneticAlgorithmCandidate*>::const_iterator itCandidate;
+
+    for (itCandidate = geneticAlgorithm.getPopulation().begin();
+            itCandidate != geneticAlgorithm.getPopulation().end();
+            itCandidate++) {
+
+        //check if requires check
+        if ((*itCandidate)->getIsFitnessUpToDate())
+            continue;
+
+        //set parameters
+        std::vector<double>::const_iterator itGen;
+        std::map<void*, TrainingAlgorithmGenetic::Type>::const_iterator itObject;
+
+        for (itGen = (*itCandidate)->getGenotype().begin(), itObject =
+                m_map.begin();
+                itGen != (*itCandidate)->getGenotype().end()
+                        || itObject != m_map.end(); itGen++, itObject++) {
+
+            switch (itObject->second) {
+
+            case TrainingAlgorithmGenetic::NeuronObject: {
+                (static_cast<NeuralNetworkNeuron*>(itObject->first))->setWeight(
+                        *itGen);
+            }
+
+                break;
+
+            case TrainingAlgorithmGenetic::PerceptronObject: {
+                (static_cast<Perceptron*>(itObject->first))->setBias(*itGen);
+            }
+
+                break;
+
+            default: {
+                throw ElemUtils::CustomException(__func__, "Object not known");
+            }
+
+                break;
+            }
+        }
+
+        //calculate
+        Data outputForward = nn.evaluate(input);
+
+        //calculate training function value
+        double trainingFunctionValue =
+                NeuralNetworkTypeRegistry::getInstance()->getTrainingFunction(
+                        trainingFunctionType)->evaluate(outputForward, output);
+
+        //set
+        (*itCandidate)->setFitness(trainingFunctionValue);
+        (*itCandidate)->setIsFitnessUpToDate(true);
+    }
+
+    //print the best one
+    (*(geneticAlgorithm.getPopulation().begin()))->print();
+}

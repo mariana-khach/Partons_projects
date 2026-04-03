@@ -1,0 +1,40 @@
+/*
+ * TrainingAlgorithmBackPropagation.h
+ *
+ *  Created on: Apr 23, 2016
+ *      Author: Pawel Sznajder
+ */
+
+#ifndef TRAININGALGORITHMBACKPROPAGATION_H_
+#define TRAININGALGORITHMBACKPROPAGATION_H_
+
+#include <vector>
+
+#include "../beans/Data.h"
+#include "../beans/TrainingFunctionType.h"
+#include "TrainingAlgorithm.h"
+
+class TrainingAlgorithmBackPropagation: public TrainingAlgorithm {
+
+public:
+
+    static const unsigned int classId;
+
+    TrainingAlgorithmBackPropagation();
+    ~TrainingAlgorithmBackPropagation();
+    virtual TrainingAlgorithmBackPropagation* clone() const;
+
+    virtual void train(const NeuralNetwork& nn, const Data& input,
+            const Data& output, TrainingFunctionType::Type trainingFunctionType,
+            const std::vector<double>& parameters);
+
+protected:
+
+    TrainingAlgorithmBackPropagation(const TrainingAlgorithmBackPropagation& other);
+    
+private:
+
+    double calculateImprovment(double trainingFunctionValue) const;
+};
+
+#endif /* TRAININGALGORITHMBACKPROPAGATION_H_ */
