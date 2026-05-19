@@ -11,10 +11,11 @@
 /numa/
 /partons/
 /elementary-utils/
+/Pawel_partons_fits/
 /partons-example/
 DVCS_analysis/build/
 DVCS_analysis/libtorch
-
+DVCS_analysis/CLAUDE.md
 
 
 # macOS files

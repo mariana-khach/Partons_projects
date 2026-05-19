@@ -82,6 +82,9 @@ list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NN_CFF_fit.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/NN_Fit.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/CFF_NN_Fit.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/DVCSCFFNNPytorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/theory/DVCSAluMinusSin1PhiTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/theory/DVCSAmplitudesBMJ12Torch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/theory/DVCSKinematicsTorch.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/Run_CFF_NN_Fit.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/nn_bsa.cpp)
 
@@ -156,7 +159,7 @@ target_link_libraries(
 set_property(TARGET NN_CFF_fit PROPERTY CXX_STANDARD 17)
 
 # Run_CFF_NN_Fit executable
-add_executable(Run_CFF_NN_Fit src/Run_CFF_NN_Fit.cpp src/NNFit/CFF_NN_Fit.cpp src/NNFit/DVCSCFFNNPytorch.cpp)
+add_executable(Run_CFF_NN_Fit src/Run_CFF_NN_Fit.cpp src/NNFit/CFF_NN_Fit.cpp src/NNFit/DVCSCFFNNPytorch.cpp src/NNFit/theory/DVCSAluMinusSin1PhiTorch.cpp src/NNFit/theory/DVCSAmplitudesBMJ12Torch.cpp src/NNFit/theory/DVCSKinematicsTorch.cpp)
 target_include_directories(Run_CFF_NN_Fit PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(
 	Run_CFF_NN_Fit

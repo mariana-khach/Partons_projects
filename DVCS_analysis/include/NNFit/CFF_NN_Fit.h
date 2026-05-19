@@ -37,6 +37,7 @@ public:
     void train_nn();
     void predict();
     void observ_calc();
+    void observ_calc_torch();
 
 private:
     std::string m_data_path;

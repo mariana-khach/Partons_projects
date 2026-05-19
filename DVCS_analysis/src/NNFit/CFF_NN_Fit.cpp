@@ -4,6 +4,7 @@
 
 #include "../../include/NNFit/CFF_NN_Fit.h"
 #include "../../include/NNFit/DVCSCFFNNPytorch.h"
+#include "../../include/NNFit/theory/DVCSAluMinusSin1PhiTorch.h"
 
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
 #include <partons/beans/observable/ObservableResult.h>
@@ -305,4 +306,33 @@ void CFF_NN_Fitter::observ_calc() {
     std::cout << "Observable: " << pDVCSObs->getClassName() << "\n";
     std::cout << "Kinematics: xB=0.2, t=-0.2, Q2=2, E=5.932, phi=6\n";
     std::cout << "DVCSAluMinusSin1Phi = " << result << "\n";
+}
+
+void CFF_NN_Fitter::observ_calc_torch() {
+
+    if (!m_net)
+        throw std::runtime_error("Model has not been trained. Call train_nn() first.");
+
+    // Same kinematics as observ_calc().  The azimuthal angle φ is not a
+    // parameter here – it is integrated out analytically by the GL quadrature
+    // inside DVCSAluMinusSin1PhiTorch::compute().
+    constexpr double xB = 0.2;
+    constexpr double t  = -0.2;
+    constexpr double Q2 = 2.;
+    constexpr double E  = 5.932;
+
+    Theory::DVCSAluMinusSin1PhiTorch obs(xB, t, Q2, E, m_net, m_output_layer);
+
+    // compute() returns a 0-d torch::Tensor.
+    // No gradient is needed here (inference only), but the tensor stays
+    // in-graph so that the same call can be used inside a training loop.
+    torch::Tensor result_tensor = obs.compute();
+    const double result = result_tensor.item<double>();
+
+    std::cout << "Observable (torch):  DVCSAluMinusSin1Phi\n";
+    std::cout << "Kinematics: xB=" << xB
+              << ", t=" << t
+              << ", Q2=" << Q2
+              << ", E=" << E << "\n";
+    std::cout << "DVCSAluMinusSin1Phi (torch) = " << result << "\n";
 }
