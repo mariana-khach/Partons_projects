@@ -2,7 +2,7 @@
 // Created by Mariana Khachatryan on 3/25/26.
 //
 
-#include "../../include/NNFit/DVCSCFFNNPytorch.h"
+#include "NNFit/theory/Modules/CFFs/DVCS/DVCSCFFNNPytorch.h"
 
 #include <ElementaryUtils/logger/CustomException.h>
 #include <ElementaryUtils/string_utils/Formatter.h>
@@ -97,17 +97,18 @@ void DVCSCFFNNPytorch::setModel(CFFNNModel net,
 }
 
 // ---------------------------------------------------------------------------
-// computeCFF
+// computeCFFTensor — single source of truth: builds the autograd-connected
+// Re/Im tensors for the GPD type currently requested by PARTONS.
 // ---------------------------------------------------------------------------
 
-std::complex<double> DVCSCFFNNPytorch::computeCFF() {
+std::pair<torch::Tensor, torch::Tensor> DVCSCFFNNPytorch::computeCFFTensor(
+        PARTONS::GPDType::Type gpdType) {
 
     if (!m_net)
         throw ElemUtils::CustomException(getClassName(), __func__,
                 "Pytorch model has not been set. Call setModel() first.");
 
-    // Determine output indices for this GPD type
-    std::string gpdName = gpdTypeToName(m_currentGPDComputeType);
+    std::string gpdName = gpdTypeToName(gpdType);
     std::string reName  = "Re" + gpdName;
     std::string imName  = "Im" + gpdName;
 
@@ -117,7 +118,6 @@ std::complex<double> DVCSCFFNNPytorch::computeCFF() {
         if (m_outputLayer[k] == imName) imIdx = k;
     }
 
-    // Build 1x3 input tensor: [xB, t, Q2]
     // xB derived from PARTONS skewness: xB = 2*xi / (1 + xi)
     double xB = 2.0 * m_xi / (1.0 + m_xi);
 
@@ -126,18 +126,28 @@ std::complex<double> DVCSCFFNNPytorch::computeCFF() {
     input[0][1] = static_cast<float>(m_t);
     input[0][2] = static_cast<float>(m_Q2);
 
-    // Run inference
-    torch::Tensor output;
-    {
-        torch::NoGradGuard no_grad;
-        m_net->eval();
-        output = m_net->forward(input);
-    }
+    torch::Tensor output = m_net->forward(input);
 
-    double re = (reIdx >= 0) ? static_cast<double>(output[0][reIdx].item<float>()) : 0.0;
-    double im = (imIdx >= 0) ? static_cast<double>(output[0][imIdx].item<float>()) : 0.0;
+    torch::Tensor re = (reIdx >= 0) ? output[0][reIdx] : torch::zeros({});
+    torch::Tensor im = (imIdx >= 0) ? output[0][imIdx] : torch::zeros({});
 
-    return std::complex<double>(re, im);
+    return {re, im};
+}
+
+// ---------------------------------------------------------------------------
+// computeCFF — PARTONS entry point. Wraps computeCFFTensor() under
+// NoGradGuard so the autograd graph isn't built for the inference path.
+// ---------------------------------------------------------------------------
+
+std::complex<double> DVCSCFFNNPytorch::computeCFF() {
+
+    torch::NoGradGuard no_grad;
+    m_net->eval();
+
+    auto [re, im] = computeCFFTensor(m_currentGPDComputeType);
+    return std::complex<double>(
+            static_cast<double>(re.item<float>()),
+            static_cast<double>(im.item<float>()));
 }
 
 // ---------------------------------------------------------------------------

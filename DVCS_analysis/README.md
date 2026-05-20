@@ -40,10 +40,15 @@ BMJ12 convention (Belitsky, Mueller, Ji — arXiv:1212.6674).
 DVCS_analysis/
 ├── src/                    # All source files (see below)
 │   └── NNFit/              # Neural-network fit subsystem
-│       ├── theory/         # Differentiable physics (libtorch)
 │       ├── CFF_NN_Fit.cpp
-│       ├── DVCSCFFNNPytorch.cpp
-│       └── NN_Fit.cpp
+│       ├── NN_Fit.cpp
+│       └── theory/         # Differentiable physics layer (libtorch + PARTONS subclasses)
+│           ├── Beans/Obs/DVCS/         # DVCSKinematicsTorch.cpp
+│           └── Modules/                # PARTONS-registered tensor modules
+│               ├── CFFs/DVCS/          # DVCSCFFNNPytorch.cpp
+│               ├── Processes/DVCS/     # DVCSAmplitudesBMJ12Torch.cpp,
+│               │                       # DVCSProcessBMJ12Torch.cpp
+│               └── Obs/DVCS/           # DVCSAluMinusSin1PhiTorch.cpp
 ├── include/                # Headers mirroring src/
 ├── bin/                    # Compiled executables (CMake output)
 ├── My_Analysis/
@@ -54,6 +59,8 @@ DVCS_analysis/
 ├── CLAUDE.md               # Developer notes for Claude Code
 └── README.md               # This file
 ```
+
+The `NNFit/theory/` layout mirrors PARTONS' own `Beans/` and `Modules/` directory hierarchy, with `CFFs`, `Processes`, and `Obs` subdivisions matching the three links of the DVCS calculation chain.
 
 ---
 
@@ -143,11 +150,13 @@ Implements `CFF_NN_Fitter`, the central class of the NNFit subsystem:
 - **`observ_calc()`** — plugs `m_net` into the PARTONS pipeline via `DVCSCFFNNPytorch`,
   uses `DVCSProcessBMJ12` + `DVCSScalesQ2Multiplier` (μF²=μR²=Q²) and calls the PARTONS
   observable service to compute `DVCSAluMinusSin1Phi`.
-- **`observ_calc_torch()`** — computes the same observable using the fully differentiable
-  `Theory::DVCSAluMinusSin1PhiTorch`, keeping the entire calculation inside the libtorch
-  autograd graph.
+- **`observ_calc_torch()`** — computes the same observable through the PARTONS-registered
+  *tensor* module chain (`DVCSCFFNNPytorch` → `DVCSProcessBMJ12Torch` →
+  `DVCSAluMinusSin1PhiTorch`), keeping the entire calculation inside the libtorch autograd
+  graph. Wired through `BaseObjectRegistry` exactly like `observ_calc()`, only the three
+  `*Torch` subclasses are substituted in. See the 2026-05-20 section below for details.
 
-#### `src/NNFit/DVCSCFFNNPytorch.cpp` — PARTONS CFF module wrapping a libtorch model
+#### `src/NNFit/theory/Modules/CFFs/DVCS/DVCSCFFNNPytorch.cpp` — PARTONS CFF module wrapping a libtorch model
 A PARTONS `DVCSConvolCoeffFunctionModule` that bridges the libtorch NN and the PARTONS
 service.  Registered via `BaseObjectRegistry` at startup.  When PARTONS requests a CFF value
 for a given kinematic point, `computeCFF()`:
@@ -162,14 +171,14 @@ training targets are defined.
 
 ### Added after second commit (untracked, 2026-04-24)
 
-#### `src/NNFit/theory/DVCSKinematicsTorch.cpp` — Kinematic precomputation (BMJ12)
+#### `src/NNFit/theory/Beans/Obs/DVCS/DVCSKinematicsTorch.cpp` — Kinematic precomputation (BMJ12)
 Pure-C++ (no torch) computation of all φ-independent kinematic quantities for a given
 `(xB, t, Q², E)`: ε, K, K̃, lepton propagator decomposition, dipole electromagnetic form
 factors F1/F2, BH Fourier coefficients, and the full 3×3×4 angular coefficient arrays
 `C_ang` and `S_ang` for the BH-DVCS interference term following BMJ12 (arXiv:1212.6674).
 All results are stored in the `DVCSKin` struct and computed once per kinematic point.
 
-#### `src/NNFit/theory/DVCSAmplitudesBMJ12Torch.cpp` — DVCS cross-section in libtorch
+#### `src/NNFit/theory/Modules/Processes/DVCS/DVCSAmplitudesBMJ12Torch.cpp` — DVCS cross-section in libtorch
 Torch-tensor implementation of the BMJ12 cross-section.  CFF inputs are 0-d tensors
 connected to the autograd graph; all arithmetic stays in-graph.  Provides:
 - `computeDressedCFFs()` — helicity combinations F̂_X(j) for j=0,1,2
@@ -177,12 +186,92 @@ connected to the autograd graph; all arithmetic stays in-graph.  Provides:
 - `computeInterfCoeffs()` — BH-DVCS interference coefficients linear in Re/Im(CFFs)
 - `crossSectionAtPhi()` — full cross-section at a given φ and beam helicity as a 0-d tensor
 
-#### `src/NNFit/theory/DVCSAluMinusSin1PhiTorch.cpp` — Differentiable beam-spin asymmetry
-Top-level class computing `A_LU^{sin1φ}` entirely within libtorch.  Runs the NN once per
-kinematic point to obtain CFF tensors, then integrates `A_LU^-(φ)` over φ ∈ [0, 2π] using
-10-point Gauss–Legendre quadrature (nodes/weights from `scipy.special.p_roots(10)`,
-hardcoded).  Returns a 0-d `torch::Tensor` carrying gradients w.r.t. all NN weights,
-enabling direct training on observable data without a PARTONS call.
+These are pure-physics free functions in the `Theory::` namespace, independent of PARTONS.
+They are wrapped by the PARTONS-registered `DVCSProcessBMJ12Torch` introduced in the next
+session.
+
+---
+
+### Added after second commit (untracked, 2026-05-20)
+
+This session reworked the differentiable observable pipeline so that every link of the
+chain (CFFs → cross-section → asymmetry) lives **inside** a PARTONS-registered module,
+each exposing a tensor-returning sibling method alongside the inherited scalar PARTONS
+API. The two pipelines stay in sync by construction and can both be driven through
+`BaseObjectRegistry`/`ModuleObjectFactory`. The previous standalone
+`Theory::DVCSAluMinusSin1PhiTorch` driver (which bypassed PARTONS entirely) was retired in
+favour of the new PARTONS subclass at the same file path.
+
+#### `src/NNFit/theory/Modules/CFFs/DVCS/DVCSCFFNNPytorch.cpp` — `computeCFFTensor()` added
+Single source of truth for the NN forward pass.
+- New method:
+  `std::pair<torch::Tensor, torch::Tensor> computeCFFTensor(PARTONS::GPDType::Type)`
+  returns the (Re, Im) 0-d tensors for the requested CFF, with the autograd graph
+  preserved (no `NoGradGuard`, no `eval()` toggle — caller controls mode).
+- Existing `computeCFF()` is now a thin wrapper around `computeCFFTensor()`:
+  `NoGradGuard` + `eval()` + `computeCFFTensor(m_currentGPDComputeType)` +
+  `.item<float>()` → `std::complex<double>` for PARTONS.
+
+#### `src/NNFit/theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.cpp` — new PARTONS process module
+PARTONS-registered subclass of `DVCSProcessBMJ12` that exposes the cross-section in tensor
+form.
+- New entry point:
+  `torch::Tensor crossSectionAtPhiTensor(double phi, double beamHelicity)` returns the
+  total σ(λ,φ) = σ_BH + σ_VCS + σ_Interf at a single azimuth as a 0-d tensor.
+- Internally `dynamic_cast`s the attached CFF module to `DVCSCFFNNPytorch*`, retrieves the
+  eight leading-twist CFF tensors via `computeCFFTensor(type)` (one call per H, E, Ht, Et),
+  and chains `Theory::computeDressedCFFs / computeVCSCoeffs / computeInterfCoeffs /
+  crossSectionAtPhi` from `DVCSAmplitudesBMJ12Torch`.
+- `buildTorchKinematics()` lazily constructs the `Theory::DVCSKin` struct from the
+  inherited (`m_xB`, `m_t`, `m_Q2`, `m_E`) and caches it so a φ-scan doesn't redo the
+  kinematic setup.
+- All inherited scalar methods (`CrossSectionBH`, `CrossSectionVCS`, `CrossSectionInterf`)
+  continue to work — PARTONS can drive this module through its normal scalar pipeline.
+
+#### `src/NNFit/theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.cpp` — new PARTONS observable module
+Replaces the previous standalone `Theory::DVCSAluMinusSin1PhiTorch`. PARTONS-registered
+subclass of `PARTONS::DVCSAluMinusSin1Phi`.
+- New entry point:
+  `torch::Tensor computeTensor(const PARTONS::DVCSObservableKinematic&)` returns
+  A_LU^{sin1φ} as a 0-d tensor carrying gradients ∂A_LU/∂(NN weights) all the way back
+  through the cross-section and CFF modules to the NN parameters.
+- Implementation: triggers the parent's scalar `compute()` once at the start to push
+  (xB, t, Q², E) onto the process module (return value discarded), then runs a 10-point
+  Gauss–Legendre quadrature, calling `DVCSProcessBMJ12Torch::crossSectionAtPhiTensor()` at
+  each φ node for both helicities. GL nodes/weights (from `scipy.special.p_roots(10)`)
+  moved into this class as `static const` arrays.
+
+#### Updated `CFF_NN_Fitter::observ_calc_torch()` in `CFF_NN_Fit.cpp`
+Now mirrors `observ_calc()` exactly, using the PARTONS factory pattern: all three `*Torch`
+modules are instantiated via `getModuleObjectFactory()`, wired up with `setProcessModule`
+/ `setConvolCoeffFunctionModule`, and driven by `pTorchObs->computeTensor(kinematic)` to
+get the final 0-d tensor (printed via `.item<double>()`).
+
+### Module chain after this refactor
+
+```
+DVCSAluMinusSin1PhiTorch    (computeTensor)            — 10-pt GL quadrature over φ
+        ↓ m_pProcessModule
+DVCSProcessBMJ12Torch       (crossSectionAtPhiTensor)  — σ(λ,φ) as 0-d tensor
+        ↓ m_pConvolCoeffFunctionModule
+DVCSCFFNNPytorch            (computeCFFTensor)         — NN CFFs as 0-d tensors
+```
+
+Each module is PARTONS-registered; PARTONS still dispatches through the inherited scalar
+methods on every link. The autograd graph survives end-to-end on the tensor sibling path.
+The hard boundary (`DVCSObservableService::computeSingleKinematic()`'s scalar return type)
+is reached *only* by the scalar path; the differentiable path bypasses the service and
+calls `computeTensor()` directly on the registered observable subclass.
+
+### Numerical cross-check
+
+Both pipelines evaluated at the same kinematics (xB=0.2, t=-0.2, Q²=2, E=5.932):
+- PARTONS scalar `observ_calc()`:        **-0.00131307**
+- PARTONS-tensor `observ_calc_torch()`:  **-0.00131306**
+
+The ~1-in-6th-sig-fig difference is the quadrature method (PARTONS' adaptive
+`MathIntegratorModule` vs. fixed 10-point Gauss–Legendre on the tensor path), not a
+physics difference.
 
 ---
 

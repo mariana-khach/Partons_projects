@@ -24,7 +24,7 @@
  *   crossSectionAtPhi(kin, bh_n, vcs, interf, phi, beamHelicity)
  */
 
-#include "DVCSKinematicsTorch.h"
+#include "NNFit/theory/Beans/Obs/DVCS/DVCSKinematicsTorch.h"
 #include <torch/torch.h>
 
 namespace Theory {

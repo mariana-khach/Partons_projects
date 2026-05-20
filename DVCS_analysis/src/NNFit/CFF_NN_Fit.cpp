@@ -3,8 +3,9 @@
 //
 
 #include "../../include/NNFit/CFF_NN_Fit.h"
-#include "../../include/NNFit/DVCSCFFNNPytorch.h"
-#include "../../include/NNFit/theory/DVCSAluMinusSin1PhiTorch.h"
+#include "NNFit/theory/Modules/CFFs/DVCS/DVCSCFFNNPytorch.h"
+#include "NNFit/theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.h"
+#include "NNFit/theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.h"
 
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
 #include <partons/beans/observable/ObservableResult.h>
@@ -117,7 +118,7 @@ void CFF_NN_Fitter::train_nn() {
     // Build model
     int n_outputs = static_cast<int>(m_output_layer.size());
     CFFNNModel net(n_outputs);
-    std::cout << "Model: 3 -> 6 (ReLU) -> " << n_outputs << "\n\n";
+    std::cout << "Model: 3 -> 6 (Tanh) -> " << n_outputs << "\n\n";
 
     torch::optim::Adam optimizer(net->parameters(), torch::optim::AdamOptions(1e-4).weight_decay(1e-3));
     auto loss_fn = [](const torch::Tensor& pred, const torch::Tensor& target) {
@@ -310,29 +311,57 @@ void CFF_NN_Fitter::observ_calc() {
 
 void CFF_NN_Fitter::observ_calc_torch() {
 
+    using namespace PARTONS;
+
     if (!m_net)
         throw std::runtime_error("Model has not been trained. Call train_nn() first.");
 
-    // Same kinematics as observ_calc().  The azimuthal angle φ is not a
-    // parameter here – it is integrated out analytically by the GL quadrature
-    // inside DVCSAluMinusSin1PhiTorch::compute().
-    constexpr double xB = 0.2;
-    constexpr double t  = -0.2;
-    constexpr double Q2 = 2.;
-    constexpr double E  = 5.932;
+    // ─── PARTONS modules (factory) ─────────────────────────────────────────
+    // The differentiable pipeline uses the *Torch subclasses of each module
+    // so that crossSectionAtPhiTensor / computeTensor stay inside the
+    // autograd graph from NN weights to the final asymmetry.
+    DVCSConvolCoeffFunctionModule* pDVCSCFF =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSConvolCoeffFunctionModule(
+                    DVCSCFFNNPytorch::classId);
+    static_cast<DVCSCFFNNPytorch*>(pDVCSCFF)->setModel(m_net, m_output_layer);
 
-    Theory::DVCSAluMinusSin1PhiTorch obs(xB, t, Q2, E, m_net, m_output_layer);
+    DVCSXiConverterModule* pDVCSXiConverter =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
+                    DVCSXiConverterXBToXi::classId);
 
-    // compute() returns a 0-d torch::Tensor.
-    // No gradient is needed here (inference only), but the tensor stays
-    // in-graph so that the same call can be used inside a training loop.
-    torch::Tensor result_tensor = obs.compute();
+    DVCSScalesModule* pDVCSScales =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSScalesModule(
+                    DVCSScalesQ2Multiplier::classId);
+
+    DVCSProcessModule* pDVCSProcess =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSProcessModule(
+                    DVCSProcessBMJ12Torch::classId);
+
+    DVCSObservable* pDVCSObs =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
+                    DVCSAluMinusSin1PhiTorch::classId);
+
+    // pQCD order
+    pDVCSCFF->setQCDOrderType(PerturbativeQCDOrderType::LO);
+
+    // Link modules
+    pDVCSProcess->setXiConverterModule(pDVCSXiConverter);
+    pDVCSProcess->setScaleModule(pDVCSScales);
+    pDVCSProcess->setConvolCoeffFunctionModule(pDVCSCFF);
+    pDVCSObs->setProcessModule(pDVCSProcess);
+
+    // ─── Kinematics (matches observ_calc()) ────────────────────────────────
+    DVCSObservableKinematic dvcsKinematics(0.2, -0.2, 2., 5.932, 6.);
+
+    // ─── Tensor evaluation ─────────────────────────────────────────────────
+    // computeTensor() returns a 0-d torch::Tensor connected to the autograd
+    // graph; .item<double>() pulls the scalar value out for printing.
+    DVCSAluMinusSin1PhiTorch* pTorchObs =
+            static_cast<DVCSAluMinusSin1PhiTorch*>(pDVCSObs);
+    torch::Tensor result_tensor = pTorchObs->computeTensor(dvcsKinematics);
     const double result = result_tensor.item<double>();
 
-    std::cout << "Observable (torch):  DVCSAluMinusSin1Phi\n";
-    std::cout << "Kinematics: xB=" << xB
-              << ", t=" << t
-              << ", Q2=" << Q2
-              << ", E=" << E << "\n";
+    std::cout << "Observable (torch): " << pDVCSObs->getClassName() << "\n";
+    std::cout << "Kinematics: xB=0.2, t=-0.2, Q2=2, E=5.932\n";
     std::cout << "DVCSAluMinusSin1Phi (torch) = " << result << "\n";
 }

@@ -18,7 +18,7 @@
  * through sI[n] ∝ Im(CFF combinations).
  */
 
-#include "../../../include/NNFit/theory/DVCSAmplitudesBMJ12Torch.h"
+#include "NNFit/theory/Modules/Processes/DVCS/DVCSAmplitudesBMJ12Torch.h"
 #include <cmath>
 
 namespace Theory {

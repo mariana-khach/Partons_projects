@@ -10,12 +10,15 @@
 #include <partons/beans/gpd/GPDType.h>
 #include <partons/modules/convol_coeff_function/DVCS/DVCSConvolCoeffFunctionModule.h>
 
+#include <torch/torch.h>
+
 #include <complex>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "CFF_NN_Fit.h"
+#include "NNFit/CFF_NN_Fit.h"
 
 /**
  * @class DVCSCFFNNPytorch
@@ -50,6 +53,24 @@ public:
             const std::map<std::string, PARTONS::BaseObjectData>& subModulesData);
 
     virtual std::complex<double> computeCFF();
+
+    /**
+     * Differentiable counterpart of computeCFF(): runs the NN forward pass
+     * on the current PARTONS kinematics (m_xi, m_t, m_Q2) and returns the
+     * Re and Im parts of the requested CFF as 0-d torch::Tensors that
+     * remain connected to the autograd graph. The mode of the underlying
+     * CFFNNModel is left untouched, so the caller controls train()/eval().
+     *
+     * If the requested GPD type's Re or Im name is absent from the output
+     * layer, the corresponding tensor is a fresh torch::zeros({}) (no grad).
+     *
+     * @param gpdType GPD type whose Re/Im CFF is to be returned
+     *                (H, E, Ht, Et). Independent of PARTONS dispatch
+     *                state, so it can be called outside the PARTONS path.
+     * @return pair (Re, Im), both 0-d tensors.
+     */
+    std::pair<torch::Tensor, torch::Tensor> computeCFFTensor(
+            PARTONS::GPDType::Type gpdType);
 
     /**
      * Inject the trained libtorch model and the output layer name list.

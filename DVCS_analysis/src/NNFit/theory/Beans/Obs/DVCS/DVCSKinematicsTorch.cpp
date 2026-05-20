@@ -15,7 +15,7 @@
  * are populated.  dC/dS arrays (LP target) are not computed.
  */
 
-#include "../../../include/NNFit/theory/DVCSKinematicsTorch.h"
+#include "NNFit/theory/Beans/Obs/DVCS/DVCSKinematicsTorch.h"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
