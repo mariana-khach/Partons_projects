@@ -97,6 +97,52 @@ void DVCSCFFNNPytorch::setModel(CFFNNModel net,
 }
 
 // ---------------------------------------------------------------------------
+// computeAllCFFsTensor — one NN forward, returns all 8 CFF components.
+// Used by the tensor pipeline to avoid the 4× redundant per-GPD-type
+// forward passes that computeCFFTensor(type) would otherwise incur.
+// ---------------------------------------------------------------------------
+
+DVCSCFFNNPytorch::AllCFFsTensor DVCSCFFNNPytorch::computeAllCFFsTensor() {
+
+    if (!m_net)
+        throw ElemUtils::CustomException(getClassName(), __func__,
+                "Pytorch model has not been set. Call setModel() first.");
+
+    // xB derived from PARTONS skewness: xB = 2*xi / (1 + xi)
+    const double xB = 2.0 * m_xi / (1.0 + m_xi);
+
+    torch::Tensor input = torch::zeros({1, 3});
+    input[0][0] = static_cast<float>(xB);
+    input[0][1] = static_cast<float>(m_t);
+    input[0][2] = static_cast<float>(m_Q2);
+
+    const torch::Tensor output = m_net->forward(input);
+
+    auto select = [&](const std::string& name) -> torch::Tensor {
+        for (int k = 0; k < static_cast<int>(m_outputLayer.size()); ++k)
+            if (m_outputLayer[k] == name)
+                return output[0][k];
+        return torch::zeros({});
+    };
+
+    AllCFFsTensor cffs;
+    cffs.H_re  = select("ReH");  cffs.H_im  = select("ImH");
+    cffs.E_re  = select("ReE");  cffs.E_im  = select("ImE");
+    cffs.Ht_re = select("ReHt"); cffs.Ht_im = select("ImHt");
+    cffs.Et_re = select("ReEt"); cffs.Et_im = select("ImEt");
+    return cffs;
+}
+
+void DVCSCFFNNPytorch::setupKinematics(double xi, double t, double Q2) {
+    // Direct write to the inherited protected members. Equivalent to what
+    // PARTONS' scalar pipeline does inside computeConvolCoeffFunction()
+    // before dispatching to computeCFF() — but without the NN forward.
+    m_xi = xi;
+    m_t  = t;
+    m_Q2 = Q2;
+}
+
+// ---------------------------------------------------------------------------
 // computeCFFTensor — single source of truth: builds the autograd-connected
 // Re/Im tensors for the GPD type currently requested by PARTONS.
 // ---------------------------------------------------------------------------

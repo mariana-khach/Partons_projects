@@ -134,19 +134,18 @@ to CSV.  Target labels are CFF values extracted from the data file by column nam
 
 #### `src/Run_CFF_NN_Fit.cpp` — Entry point for the full differentiable pipeline
 Entry point for `Run_CFF_NN_Fit` executable.  Constructs a `CFF_NN_Fitter` with the CLAS15
-BSA dataset, runs the full four-step workflow:
-1. `train_nn()` — train NN on CFF labels
-2. `predict()` — evaluate on all data, compute MSE and R²
-3. `observ_calc()` — compute `DVCSAluMinusSin1Phi` via PARTONS using the trained NN
-4. `observ_calc_torch()` — compute the same observable via the differentiable torch pipeline
+BSA dataset, runs the workflow:
+1. `train_nn()` — train NN with χ² loss on the observable (via `CustomLoss`)
+2. `observ_calc()` — compute `DVCSAluMinusSin1Phi` via the PARTONS service using the trained NN
+3. `observ_calc_torch()` — compute the same observable through the PARTONS-tensor module chain (direct `computeTensor`)
+4. `observ_calc_torch_via_service()` — drive the `*Torch` subclasses through the PARTONS service (verification path)
 
 #### `src/NNFit/CFF_NN_Fit.cpp` — CFF fitter with full observable pipeline
 Implements `CFF_NN_Fitter`, the central class of the NNFit subsystem:
 
-- **`train_nn()`** — Adam (lr=1e-4, weight_decay=1e-3), min-max input scaling, early stopping
-  (patience=200, max 10000 epochs), writes `cff_learning_curve.csv`.
-- **`predict()`** — inference on all data, writes `cff_prediction.csv` and
-  `cff_predict_model_eval.csv` (MSE + R² per CFF output).
+- **`train_nn()`** — Adam (lr=1e-4, weight_decay=1e-3), raw (unscaled) inputs, early stopping
+  (patience=200, max 10000 epochs), writes `cff_learning_curve.csv`. Drives observable
+  training via `CustomLoss` (χ² between predicted A_LU and the data observable).
 - **`observ_calc()`** — plugs `m_net` into the PARTONS pipeline via `DVCSCFFNNPytorch`,
   uses `DVCSProcessBMJ12` + `DVCSScalesQ2Multiplier` (μF²=μR²=Q²) and calls the PARTONS
   observable service to compute `DVCSAluMinusSin1Phi`.
@@ -315,10 +314,8 @@ libtorch is bundled locally at `libtorch/`.  All others are found via `cmake/Mod
 | File | Content |
 |---|---|
 | `cff_learning_curve.csv` | epoch, train_loss, val_loss (every 2 epochs) |
-| `cff_prediction.csv` | True vs predicted CFF values for all data points |
-| `cff_predict_model_eval.csv` | MSE and R² per CFF output |
-| `dvcs_DVCSAluSinPhi_BSACLAS15_ANN.csv` | Mean ± σ observable per kinematic point (replica ensemble) |
-| `dvcs_DVCSAluSinPhi_ANN_replicas.csv` | Individual replica values at kinematic point j=3 |
+| `dvcs_DVCSAluSinPhi_BSACLAS15_ANN.csv` | Mean ± σ observable per kinematic point (replica ensemble, from `ObsCalc_CFFNNReplicas`) |
+| `dvcs_DVCSAluSinPhi_ANN_replicas.csv` | Individual replica values at kinematic point j=3 (from `ObsCalc_CFFNNReplicas`) |
 
 ---
 
