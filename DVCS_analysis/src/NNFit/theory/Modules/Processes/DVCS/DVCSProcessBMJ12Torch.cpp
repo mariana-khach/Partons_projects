@@ -14,6 +14,7 @@
 #include <ElementaryUtils/string_utils/Formatter.h>
 #include <partons/BaseObjectRegistry.h>
 #include <partons/beans/gpd/GPDType.h>
+#include <partons/modules/xi_converter/DVCS/DVCSXiConverterModule.h>
 
 #include "NNFit/theory/Modules/CFFs/DVCS/DVCSCFFNNPytorch.h"
 #include "NNFit/theory/Modules/Processes/DVCS/DVCSAmplitudesBMJ12Torch.h"
@@ -105,16 +106,53 @@ void DVCSProcessBMJ12Torch::buildTorchKinematics() {
 }
 
 // ---------------------------------------------------------------------------
-// crossSectionAtPhiTensor
+// setupKinematics — replacement for pProc->compute(...) when only the
+// tensor path will run. setKinematics() is protected on DVCSProcessModule
+// but accessible from this derived class.
 // ---------------------------------------------------------------------------
 
-torch::Tensor DVCSProcessBMJ12Torch::crossSectionAtPhiTensor(
-        double phi, double beamHelicity) {
+void DVCSProcessBMJ12Torch::setupKinematics(
+        const PARTONS::DVCSObservableKinematic& kinematic) {
 
-    // (1) Ensure the φ-independent torch-side kinematics are up to date.
+    setKinematics(kinematic);   // inherited; sets m_xB, m_t, m_Q2, m_E, m_phi
+
+    // Push the same kinematic point onto the CFF module. PARTONS' scalar
+    // pipeline does this inside computeConvolCoeffFunction() as a side
+    // effect of dispatching computeCFF(); we replicate just the state
+    // update (no NN forward) so that subsequent computeCFFTensor() calls
+    // see correct (xi, t, Q²) instead of construction-default zeros.
+    DVCSCFFNNPytorch* pCFF =
+            dynamic_cast<DVCSCFFNNPytorch*>(m_pConvolCoeffFunctionModule);
+
+    if (pCFF == nullptr)
+        throw ElemUtils::CustomException(getClassName(), __func__,
+                "Attached CFF module is not a DVCSCFFNNPytorch.");
+
+    // xB → xi via the configured xi converter (typically DVCSXiConverterXBToXi:
+    // xi = xB / (2 − xB)). Going through the module rather than inlining
+    // the conversion keeps this code working if the xi converter is ever
+    // swapped for a different parametrisation.
+    const double xi = m_pXiConverterModule->compute(kinematic).getValue();
+
+    pCFF->setupKinematics(xi, m_t, m_Q2);
+
+    buildTorchKinematics();     // refresh Theory::DVCSKin cache
+}
+
+// ---------------------------------------------------------------------------
+// computeFourierCoeffsTensor — single NN forward + DressedCFFs +
+// Fourier-coefficient build. Designed to be called once per kinematic
+// point; the result is reused across all φ and helicity values in the
+// observable's quadrature loop, eliminating the (4 × 20)× redundancy
+// of computing the same CFFs and coefficients per cross-section call.
+// ---------------------------------------------------------------------------
+
+std::pair<Theory::VCSCoeffs, Theory::InterfCoeffs>
+DVCSProcessBMJ12Torch::computeFourierCoeffsTensor() {
+
+    // Ensure the φ-independent torch-side kinematics are up to date.
     buildTorchKinematics();
 
-    // (2) Get the attached CFF module as a DVCSCFFNNPytorch*.
     DVCSCFFNNPytorch* pCFF =
             dynamic_cast<DVCSCFFNNPytorch*>(m_pConvolCoeffFunctionModule);
 
@@ -125,24 +163,35 @@ torch::Tensor DVCSProcessBMJ12Torch::crossSectionAtPhiTensor(
                     << "the differentiable cross-section path requires the "
                     << "tensor-returning CFF API.");
 
-    // (3) Pull the 8 leading-twist CFF tensors. One NN forward pass per
-    //     GPD type — same redundancy as the existing PARTONS scalar path;
-    //     can be optimised later by adding a batched CFF accessor.
-    auto [H_re,  H_im ] = pCFF->computeCFFTensor(PARTONS::GPDType::H);
-    auto [E_re,  E_im ] = pCFF->computeCFFTensor(PARTONS::GPDType::E);
-    auto [Ht_re, Ht_im] = pCFF->computeCFFTensor(PARTONS::GPDType::Ht);
-    auto [Et_re, Et_im] = pCFF->computeCFFTensor(PARTONS::GPDType::Et);
+    // One NN forward pass for all 8 leading-twist CFF components.
+    DVCSCFFNNPytorch::AllCFFsTensor cffs = pCFF->computeAllCFFsTensor();
 
-    // (4) Dress with BMJ12 kinematic helicity coefficients and build
-    //     the φ-independent Fourier coefficients.
+    // Dress with BMJ12 kinematic helicity coefficients and build the
+    // φ-independent Fourier coefficients (purely real for unpolarised
+    // target, with CFF_FT = CFF_FLT = 0).
     Theory::DressedCFFs dc = Theory::computeDressedCFFs(
             m_torchKin,
-            H_re, H_im, E_re, E_im, Ht_re, Ht_im, Et_re, Et_im);
+            cffs.H_re,  cffs.H_im,
+            cffs.E_re,  cffs.E_im,
+            cffs.Ht_re, cffs.Ht_im,
+            cffs.Et_re, cffs.Et_im);
 
-    Theory::VCSCoeffs    vcs    = Theory::computeVCSCoeffs(m_torchKin, dc);
-    Theory::InterfCoeffs interf = Theory::computeInterfCoeffs(m_torchKin, dc);
+    return {Theory::computeVCSCoeffs   (m_torchKin, dc),
+            Theory::computeInterfCoeffs(m_torchKin, dc)};
+}
 
-    // (5) Total cross-section at this single φ point.
+// ---------------------------------------------------------------------------
+// crossSectionAtPhiTensor — now takes pre-computed Fourier coefficients.
+// Just the φ-dependent assembly is done per call; everything upstream
+// (NN forward, dressed CFFs, Fourier coeffs) lives in the caller and is
+// built once per kinematic point.
+// ---------------------------------------------------------------------------
+
+torch::Tensor DVCSProcessBMJ12Torch::crossSectionAtPhiTensor(
+        const Theory::VCSCoeffs&    vcs,
+        const Theory::InterfCoeffs& interf,
+        double phi, double beamHelicity) {
+
     return Theory::crossSectionAtPhi(
             m_torchKin, vcs, interf, phi, beamHelicity);
 }

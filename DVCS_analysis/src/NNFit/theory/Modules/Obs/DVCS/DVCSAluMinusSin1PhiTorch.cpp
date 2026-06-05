@@ -8,10 +8,10 @@
  * graph from NN weights to the integrated asymmetry stays intact.
  *
  * The φ slot of the input kinematic is ignored — φ is integrated out
- * by the quadrature. (xB, t, Q², E) are pushed onto the process
- * module by triggering its inherited scalar compute() once at the
- * start; the returned scalar result is discarded — we only need its
- * side effect of setting up the module's kinematic state.
+ * by the quadrature. (xB, t, Q², E) are pushed onto the process module
+ * via DVCSProcessBMJ12Torch::setupKinematics(), which calls the
+ * inherited protected setKinematics() and refreshes the Theory::DVCSKin
+ * cache without running the scalar BMJ12 pipeline.
  *
  * GL nodes/weights are hardcoded from scipy.special.p_roots(10).
  */
@@ -20,7 +20,6 @@
 
 #include <ElementaryUtils/logger/CustomException.h>
 #include <ElementaryUtils/string_utils/Formatter.h>
-#include <NumA/linear_algebra/vector/Vector3D.h>
 #include <partons/BaseObjectRegistry.h>
 
 #include <cmath>
@@ -135,14 +134,21 @@ torch::Tensor DVCSAluMinusSin1PhiTorch::computeTensor(
                     << "observable path requires the tensor-returning "
                     << "cross-section API.");
 
-    // (2) Push (xB, t, Q², E) onto the process module by triggering its
-    //     scalar compute() once. The returned PhysicalType<double> is
-    //     discarded; we only need the side effect of the kinematics
-    //     state being initialised on the module.
-    NumA::Vector3D zeroPolarization(0., 0., 0.);
-    pProc->compute(+1., -1., zeroPolarization, kinematic);
+    // (2) Push (xB, t, Q², E) onto the process module. setupKinematics()
+    //     calls the inherited protected setKinematics() and refreshes the
+    //     cached Theory::DVCSKin — no scalar BH+VCS+Interf pipeline runs,
+    //     so no wasted NN forwards or scalar physics arithmetic.
+    pProc->setupKinematics(kinematic);
 
-    // (3) 10-point Gauss–Legendre quadrature over φ ∈ [0, 2π].
+    // (3) Single NN forward + Fourier-coefficient build, before the
+    //     quadrature loop. Both (VCS², BH-DVCS interference) coeffs are
+    //     φ-independent, so we compute them once and reuse across all
+    //     10 GL nodes × 2 helicities = 20 cross-section evaluations.
+    //     This avoids 4× redundant per-GPD NN forwards and the dressed
+    //     CFF / Fourier build that would otherwise occur on every call.
+    auto [vcs, interf] = pProc->computeFourierCoeffsTensor();
+
+    // (4) 10-point Gauss–Legendre quadrature over φ ∈ [0, 2π].
     //
     //     nodes uₖ ∈ [-1, 1]  →  φₖ = π(1 + uₖ) ∈ [0, 2π]
     //     ∫₀^{2π} f(φ) dφ ≈ π Σₖ wₖ f(φₖ)
@@ -159,8 +165,8 @@ torch::Tensor DVCSAluMinusSin1PhiTorch::computeTensor(
         const double phi_k = PI * (1. + s_gl_nodes[k]);
         const double w_k   = s_gl_weights[k];
 
-        torch::Tensor sig_p = pProc->crossSectionAtPhiTensor(phi_k, +1.);
-        torch::Tensor sig_m = pProc->crossSectionAtPhiTensor(phi_k, -1.);
+        torch::Tensor sig_p = pProc->crossSectionAtPhiTensor(vcs, interf, phi_k, +1.);
+        torch::Tensor sig_m = pProc->crossSectionAtPhiTensor(vcs, interf, phi_k, -1.);
         torch::Tensor denom = sig_p + sig_m;
 
         // Guard against pathological zero denominator.

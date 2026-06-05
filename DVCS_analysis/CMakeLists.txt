@@ -81,6 +81,7 @@ list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NN_CFF_fit.cpp)
 # exclude NNFit library sources from the main executable (they use libtorch)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/NN_Fit.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/CFF_NN_Fit.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/CustomLoss.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/theory/Modules/CFFs/DVCS/DVCSCFFNNPytorch.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/theory/Modules/Processes/DVCS/DVCSAmplitudesBMJ12Torch.cpp)
@@ -160,7 +161,7 @@ target_link_libraries(
 set_property(TARGET NN_CFF_fit PROPERTY CXX_STANDARD 17)
 
 # Run_CFF_NN_Fit executable
-add_executable(Run_CFF_NN_Fit src/Run_CFF_NN_Fit.cpp src/NNFit/CFF_NN_Fit.cpp src/NNFit/theory/Modules/CFFs/DVCS/DVCSCFFNNPytorch.cpp src/NNFit/theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.cpp src/NNFit/theory/Modules/Processes/DVCS/DVCSAmplitudesBMJ12Torch.cpp src/NNFit/theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.cpp src/NNFit/theory/Beans/Obs/DVCS/DVCSKinematicsTorch.cpp)
+add_executable(Run_CFF_NN_Fit src/Run_CFF_NN_Fit.cpp src/NNFit/CFF_NN_Fit.cpp src/NNFit/CustomLoss.cpp src/NNFit/theory/Modules/CFFs/DVCS/DVCSCFFNNPytorch.cpp src/NNFit/theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.cpp src/NNFit/theory/Modules/Processes/DVCS/DVCSAmplitudesBMJ12Torch.cpp src/NNFit/theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.cpp src/NNFit/theory/Beans/Obs/DVCS/DVCSKinematicsTorch.cpp)
 target_include_directories(Run_CFF_NN_Fit PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(
 	Run_CFF_NN_Fit

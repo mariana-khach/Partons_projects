@@ -3,6 +3,7 @@
 //
 
 #include "../../include/NNFit/CFF_NN_Fit.h"
+#include "NNFit/CustomLoss.h"
 #include "NNFit/theory/Modules/CFFs/DVCS/DVCSCFFNNPytorch.h"
 #include "NNFit/theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.h"
 #include "NNFit/theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.h"
@@ -37,7 +38,8 @@ CFF_NN_Fitter::CFF_NN_Fitter(const std::string& data_path,
       m_test_fraction(test_fraction),
       m_output_layer(output_layer) {}
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> CFF_NN_Fitter::load_data() const {
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+CFF_NN_Fitter::load_data_observable() const {
 
     std::ifstream file(m_data_path);
     if (!file.is_open())
@@ -59,31 +61,35 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> CFF_NN_Fitter::load_data
         rows.push_back(row);
     }
 
-    int n          = static_cast<int>(rows.size());
+    int n = static_cast<int>(rows.size());
     if (n == 0)
         throw std::runtime_error("No data rows read from file: " + m_data_path);
 
-    int n_outputs  = static_cast<int>(m_output_layer.size());
-
+    // Expected columns: xB | t | Q2 | E | phi | DVCSAluSinPhi | error
+    // (φ is dropped — the observable integrates it out)
     torch::Tensor X     = torch::zeros({n, 3});
-    torch::Tensor y     = torch::zeros({n, n_outputs});
+    torch::Tensor E     = torch::zeros({n});
+    torch::Tensor y_obs = torch::zeros({n});
     torch::Tensor sigma = torch::zeros({n});
 
     for (int i = 0; i < n; ++i) {
         for (int j = 0; j < 3; ++j)
             X[i][j] = rows[i][j];
-        for (int k = 0; k < n_outputs; ++k)
-            y[i][k] = rows[i][5 + k];
-        sigma[i] = rows[i].back();  // last column: "error"
+        E[i]     = rows[i][3];
+        y_obs[i] = rows[i][5];
+        sigma[i] = rows[i].back();
     }
 
-    return {X, y, sigma};
+    return {X, E, y_obs, sigma};
 }
 
 void CFF_NN_Fitter::train_nn() {
 
-    auto [X, y, sigma] = load_data();
-    (void)sigma;  // uncertainties stored but not used in training
+    // ─── Load observable training data ─────────────────────────────────────
+    // Data columns: xB | t | Q² | E | phi | DVCSAluSinPhi | error
+    // φ is dropped (integrated out by the observable); y_obs is the
+    // observable value; sigma is the uncertainty entering the χ² loss.
+    auto [X, E, y_obs, sigma] = load_data_observable();
 
     int n       = static_cast<int>(X.size(0));
     int n_val   = static_cast<int>(n * m_test_fraction);
@@ -91,7 +97,7 @@ void CFF_NN_Fitter::train_nn() {
 
     std::cout << "Loaded " << n << " samples | train: " << n_train
               << " | val: " << n_val << "\n";
-    std::cout << "Output layer (" << m_output_layer.size() << "): ";
+    std::cout << "NN output layer (" << m_output_layer.size() << "): ";
     for (const auto& s : m_output_layer) std::cout << s << " ";
     std::cout << "\n\n";
 
@@ -103,27 +109,33 @@ void CFF_NN_Fitter::train_nn() {
     auto idx_train = torch::tensor(std::vector<int>(idx.begin(), idx.begin() + n_train));
     auto idx_val   = torch::tensor(std::vector<int>(idx.begin() + n_train, idx.end()));
 
-    torch::Tensor X_train = X.index_select(0, idx_train);
-    torch::Tensor y_train = y.index_select(0, idx_train);
-    torch::Tensor X_val   = X.index_select(0, idx_val);
-    torch::Tensor y_val   = y.index_select(0, idx_val);
+    torch::Tensor X_train     = X.index_select    (0, idx_train);
+    torch::Tensor E_train     = E.index_select    (0, idx_train);
+    torch::Tensor y_obs_train = y_obs.index_select(0, idx_train);
+    torch::Tensor sigma_train = sigma.index_select(0, idx_train);
 
-    // Min-max scaling: fit on training set, apply to both splits
-    m_X_min = std::get<0>(X_train.min(0));
-    m_X_max = std::get<0>(X_train.max(0));
-    auto denom  = (m_X_max - m_X_min).clamp_min(1e-8f);
-    X_train = (X_train - m_X_min) / denom;
-    X_val   = (X_val   - m_X_min) / denom;
+    torch::Tensor X_val     = X.index_select    (0, idx_val);
+    torch::Tensor E_val     = E.index_select    (0, idx_val);
+    torch::Tensor y_obs_val = y_obs.index_select(0, idx_val);
+    torch::Tensor sigma_val = sigma.index_select(0, idx_val);
 
-    // Build model
+    // No input scaling: the PARTONS DVCSCFFNNPytorch module feeds raw
+    // (xB, t, Q²) to the NN. Keeping training inputs raw too ensures the
+    // NN sees the same input distribution at train and inference time.
+
+    // ─── Build model ───────────────────────────────────────────────────────
     int n_outputs = static_cast<int>(m_output_layer.size());
-    CFFNNModel net(n_outputs);
+    m_net = CFFNNModel(n_outputs);
     std::cout << "Model: 3 -> 6 (Tanh) -> " << n_outputs << "\n\n";
 
-    torch::optim::Adam optimizer(net->parameters(), torch::optim::AdamOptions(1e-4).weight_decay(1e-3));
-    auto loss_fn = [](const torch::Tensor& pred, const torch::Tensor& target) {
-        return (pred - target).pow(2).mean();
-    };
+    torch::optim::Adam optimizer(m_net->parameters(),
+            torch::optim::AdamOptions(1e-4).weight_decay(1e-3));
+
+    // χ² loss on the observable, evaluated through the PARTONS-tensor
+    // module chain. Constructing CustomLoss instantiates the three
+    // PARTONS modules and wires them up once; subsequent forward()
+    // calls reuse them.
+    CustomLoss loss_fn(m_net, m_output_layer);
 
     // Early stopping parameters
     const int patience       = 200;
@@ -143,18 +155,18 @@ void CFF_NN_Fitter::train_nn() {
     for (int epoch = 1; epoch <= max_epochs; ++epoch) {
 
         // Training step
-        net->train();
+        m_net->train();
         optimizer.zero_grad();
-        auto loss_train = loss_fn(net->forward(X_train), y_train);
+        auto loss_train = loss_fn(X_train, E_train, y_obs_train, sigma_train);
         loss_train.backward();
         optimizer.step();
 
         // Validation step
-        net->eval();
+        m_net->eval();
         float val_loss;
         {
             torch::NoGradGuard no_grad;
-            val_loss = loss_fn(net->forward(X_val), y_val).item<float>();
+            val_loss = loss_fn(X_val, E_val, y_obs_val, sigma_val).item<float>();
         }
 
         if (epoch % 2 == 0) {
@@ -177,82 +189,12 @@ void CFF_NN_Fitter::train_nn() {
             if (patience_count >= patience) {
                 std::cout << "\nEarly stopping at epoch " << epoch
                           << " | Best val loss: " << best_val_loss << "\n";
-                m_net = net;
                 return;
             }
         }
     }
 
     std::cout << "\nTraining complete | Best val loss: " << best_val_loss << "\n";
-    m_net = net;
-}
-
-void CFF_NN_Fitter::predict() {
-
-    if (!m_net)
-        throw std::runtime_error("Model has not been trained. Call train_nn() first.");
-
-    auto [X, y, sigma] = load_data();
-    (void)sigma;  // uncertainties stored but not written to prediction output
-    int n         = static_cast<int>(X.size(0));
-    int n_outputs = static_cast<int>(m_output_layer.size());
-
-    // Apply the same min-max scaling used during training
-    auto denom = (m_X_max - m_X_min).clamp_min(1e-8f);
-    X = (X - m_X_min) / denom;
-
-    torch::Tensor y_pred;
-    {
-        torch::NoGradGuard no_grad;
-        m_net->eval();
-        y_pred = m_net->forward(X);
-    }
-
-    const std::string out_dir = "/Users/marianav/Documents/Research/Analysis/GPD_studies/git/Partons/DVCS_analysis/My_Analysis/Partons_output";
-    std::ofstream csv(out_dir + "/cff_prediction.csv", std::ios::trunc);
-    if (!csv)
-        throw std::runtime_error("Cannot open cff_prediction.csv for writing in: " + out_dir);
-
-    // Header
-    for (int k = 0; k < n_outputs; ++k)
-        csv << m_output_layer[k] << "_true,";
-    for (int k = 0; k < n_outputs; ++k) {
-        csv << m_output_layer[k] << "_pred";
-        if (k < n_outputs - 1) csv << ",";
-    }
-    csv << "\n";
-
-    // Rows
-    for (int i = 0; i < n; ++i) {
-        for (int k = 0; k < n_outputs; ++k)
-            csv << y[i][k].item<float>() << ",";
-        for (int k = 0; k < n_outputs; ++k) {
-            csv << y_pred[i][k].item<float>();
-            if (k < n_outputs - 1) csv << ",";
-        }
-        csv << "\n";
-    }
-
-    std::cout << "Predictions written to cff_prediction.csv (" << n << " rows)\n";
-
-    // Compute R² and MSE per output and write cff_predict_model_eval.csv
-    std::ofstream eval(out_dir + "/cff_predict_model_eval.csv", std::ios::trunc);
-    if (!eval)
-        throw std::runtime_error("Cannot open cff_predict_model_eval.csv for writing in: " + out_dir);
-
-    eval << "output,mse,r_squared\n";
-    for (int k = 0; k < n_outputs; ++k) {
-        auto  y_k    = y.select(1, k);
-        auto  yp_k   = y_pred.select(1, k);
-        float mse    = (y_k - yp_k).pow(2).mean().item<float>();
-        float y_mean = y_k.mean().item<float>();
-        float ss_res = (y_k - yp_k).pow(2).sum().item<float>();
-        float ss_tot = (y_k - y_mean).pow(2).sum().item<float>();
-        float r2     = (ss_tot > 0.f) ? 1.f - ss_res / ss_tot : 0.f;
-        eval << m_output_layer[k] << "," << mse << "," << r2 << "\n";
-        std::cout << m_output_layer[k] << " | MSE: " << mse << " | R²: " << r2 << "\n";
-    }
-    std::cout << "Model evaluation written to cff_predict_model_eval.csv\n";
 }
 
 void CFF_NN_Fitter::observ_calc() {
@@ -364,4 +306,60 @@ void CFF_NN_Fitter::observ_calc_torch() {
     std::cout << "Observable (torch): " << pDVCSObs->getClassName() << "\n";
     std::cout << "Kinematics: xB=0.2, t=-0.2, Q2=2, E=5.932\n";
     std::cout << "DVCSAluMinusSin1Phi (torch) = " << result << "\n";
+}
+
+void CFF_NN_Fitter::observ_calc_torch_via_service() {
+
+    using namespace PARTONS;
+
+    if (!m_net)
+        throw std::runtime_error("Model has not been trained. Call train_nn() first.");
+
+    // Same wiring as observ_calc(), but instantiating the *
+    // subclasses
+    // for the process and observable modules. PARTONS' DVCSObservableService
+    // still drives the computation; only the inherited scalar virtuals
+    // (CrossSectionBH/VCS/Interf on the process module, MathIntegratorModule
+    // φ-integral inside the observable) run. The tensor entry points are not
+    // touched. Purpose: verify that the *Torch subclasses remain operable
+    // through PARTONS' standard service path.
+    DVCSConvolCoeffFunctionModule* pDVCSCFF =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSConvolCoeffFunctionModule(
+                    DVCSCFFNNPytorch::classId);
+    static_cast<DVCSCFFNNPytorch*>(pDVCSCFF)->setModel(m_net, m_output_layer);
+
+    DVCSXiConverterModule* pDVCSXiConverter =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
+                    DVCSXiConverterXBToXi::classId);
+
+    DVCSScalesModule* pDVCSScales =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSScalesModule(
+                    DVCSScalesQ2Multiplier::classId);
+
+    DVCSProcessModule* pDVCSProcess =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSProcessModule(
+                    DVCSProcessBMJ12Torch::classId);
+
+    DVCSObservable* pDVCSObs =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
+                    DVCSAluMinusSin1PhiTorch::classId);
+
+    pDVCSCFF->setQCDOrderType(PerturbativeQCDOrderType::LO);
+
+    pDVCSProcess->setXiConverterModule(pDVCSXiConverter);
+    pDVCSProcess->setScaleModule(pDVCSScales);
+    pDVCSProcess->setConvolCoeffFunctionModule(pDVCSCFF);
+    pDVCSObs->setProcessModule(pDVCSProcess);
+
+    DVCSObservableService* pObservableService =
+            Partons::getInstance()->getServiceObjectRegistry()->getDVCSObservableService();
+
+    DVCSObservableKinematic dvcsKinematics(0.2, -0.2, 2., 5.932, 6.);
+
+    double result = pObservableService->computeSingleKinematic(
+            dvcsKinematics, pDVCSObs).getValue().getValue();
+
+    std::cout << "Observable (torch-classes via service): " << pDVCSObs->getClassName() << "\n";
+    std::cout << "Kinematics: xB=0.2, t=-0.2, Q2=2, E=5.932, phi=6\n";
+    std::cout << "DVCSAluMinusSin1Phi (torch-classes via service) = " << result << "\n";
 }

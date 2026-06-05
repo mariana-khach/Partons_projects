@@ -73,6 +73,43 @@ public:
             PARTONS::GPDType::Type gpdType);
 
     /**
+     * Bundle of the four leading-twist CFFs as 0-d torch::Tensors, in the
+     * same (Re, Im) pairing accepted by Theory::computeDressedCFFs.
+     * Missing labels in m_outputLayer become torch::zeros({}) (no grad).
+     */
+    struct AllCFFsTensor {
+        torch::Tensor H_re,  H_im;
+        torch::Tensor E_re,  E_im;
+        torch::Tensor Ht_re, Ht_im;
+        torch::Tensor Et_re, Et_im;
+    };
+
+    /**
+     * Single NN forward pass at the cached (m_xi, m_t, m_Q2). Returns
+     * the eight CFF components in one struct, sliced from a single
+     * [1, n_outputs] forward result. Use this in the tensor pipeline
+     * instead of calling computeCFFTensor(type) four times — same final
+     * tensors, but 1× rather than 4× the NN cost. Same mode handling as
+     * computeCFFTensor: caller controls train()/eval(), no NoGradGuard.
+     */
+    AllCFFsTensor computeAllCFFsTensor();
+
+    /**
+     * Push the kinematic state used by computeCFFTensor() / computeCFF()
+     * onto the inherited protected members of DVCSConvolCoeffFunctionModule
+     * (m_xi, m_t, m_Q2). PARTONS' scalar pipeline normally does this as a
+     * side effect of computeConvolCoeffFunction(); this helper exposes the
+     * same setup for callers that drive the tensor path directly and want
+     * to avoid the discarded NN forward pass that a full computeCFF() call
+     * would entail.
+     *
+     * @param xi GPD skewness (already converted from xB by the xi converter).
+     * @param t  Mandelstam t (GeV²).
+     * @param Q2 Photon virtuality (GeV²).
+     */
+    void setupKinematics(double xi, double t, double Q2);
+
+    /**
      * Inject the trained libtorch model and the output layer name list.
      * Must be called before the module is used for computation.
      * @param net     Trained CFFNNModel.

@@ -24,6 +24,7 @@
 
 #include <ElementaryUtils/parameters/Parameters.h>
 #include <partons/beans/automation/BaseObjectData.h>
+#include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
 #include <partons/modules/process/DVCS/DVCSProcessBMJ12.h>
 
 #include <torch/torch.h>
@@ -32,6 +33,9 @@
 #include <string>
 
 #include "NNFit/theory/Beans/Obs/DVCS/DVCSKinematicsTorch.h"
+#include "NNFit/theory/Modules/Processes/DVCS/DVCSAmplitudesBMJ12Torch.h"
+
+#include <utility>
 
 class DVCSProcessBMJ12Torch : public PARTONS::DVCSProcessBMJ12 {
 
@@ -55,26 +59,66 @@ public:
             const std::map<std::string, PARTONS::BaseObjectData>& subModulesData);
 
     /**
+     * Build the φ-independent BMJ12 Fourier coefficients (VCS² and
+     * BH-DVCS interference) by:
+     *   1. doing a single NN forward via DVCSCFFNNPytorch::computeAllCFFsTensor(),
+     *   2. dressing the raw CFFs with kinematic helicity coefficients
+     *      via Theory::computeDressedCFFs,
+     *   3. running Theory::computeVCSCoeffs / computeInterfCoeffs.
+     *
+     * Call once per kinematic point, then reuse the result across all
+     * φ and helicity values — this is the entry point that turns the
+     * (4 × 20)× redundant NN-forward / dressed-CFF cost into 1×.
+     *
+     * Prerequisites: kinematics already pushed onto the modules by a
+     * preceding setupKinematics() (or scalar compute()); attached CFF
+     * module must be a DVCSCFFNNPytorch.
+     *
+     * @return (VCSCoeffs, InterfCoeffs), both in-graph torch tensors.
+     */
+    std::pair<Theory::VCSCoeffs, Theory::InterfCoeffs>
+        computeFourierCoeffsTensor();
+
+    /**
      * Differentiable counterpart of the scalar BH+VCS+Interference
      * cross-section sequence. Returns the total cross-section
      *
      *     σ(λ, φ) = σ_BH + σ_VCS + σ_Interf
      *
      * at a single azimuthal angle φ as a 0-d torch::Tensor connected
-     * to the autograd graph. Gradients flow back through the CFF
-     * tensors retrieved from the upstream DVCSCFFNNPytorch CFF module
-     * to the NN weights.
+     * to the autograd graph. Now takes pre-computed Fourier coefficients
+     * (from computeFourierCoeffsTensor()) so that the φ loop in the
+     * upstream observable can call this 20× without redoing the NN
+     * forward / dressed-CFF / Fourier-coeff work.
      *
-     * Prerequisites: kinematics on the parent (m_xB, m_t, m_Q2, m_E)
-     * must already be set by the usual PARTONS pipeline (e.g. via a
-     * prior compute() call from the observable service); the attached
-     * CFF module must be a DVCSCFFNNPytorch instance.
-     *
+     * @param vcs          VCS² Fourier coefficients (φ-independent).
+     * @param interf       BH-DVCS interference coefficients (φ-independent).
      * @param phi          azimuthal angle (rad, Trento convention)
      * @param beamHelicity ±1
      * @return σ(λ,φ) as a 0-d torch::Tensor
      */
-    torch::Tensor crossSectionAtPhiTensor(double phi, double beamHelicity);
+    torch::Tensor crossSectionAtPhiTensor(
+            const Theory::VCSCoeffs&    vcs,
+            const Theory::InterfCoeffs& interf,
+            double phi, double beamHelicity);
+
+    /**
+     * Push a kinematic point onto the module without running the scalar
+     * BMJ12 pipeline. Calls the inherited protected setKinematics() to
+     * set (xB, t, Q², E, φ) on the parent's members, then refreshes the
+     * cached Theory::DVCSKin used by the tensor path.
+     *
+     * Intended as a replacement for the scalar pProc->compute(...) call
+     * that callers of the tensor path would otherwise need to make
+     * purely as a side-effect to initialise kinematic state. Avoids the
+     * four NoGrad CFF NN forward passes plus the BH+VCS+Interf scalar
+     * arithmetic that compute() would do and discard.
+     *
+     * @param kinematic (xB, t, Q², E, φ) — φ is stored but not used by
+     *                  the tensor path (it is supplied per-call to
+     *                  crossSectionAtPhiTensor).
+     */
+    void setupKinematics(const PARTONS::DVCSObservableKinematic& kinematic);
 
 protected:
 
