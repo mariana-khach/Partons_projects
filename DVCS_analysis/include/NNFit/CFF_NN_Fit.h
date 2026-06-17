@@ -35,26 +35,21 @@ public:
             "ImH", "ReH", "ImE", "ReE", "ImHt", "ReHt", "ImEt", "ReEt"});
 
     void train_nn();
+    void predict();
     void observ_calc();
     void observ_calc_torch();
-
     void observ_calc_torch_scalar();
-
 
 private:
     std::string m_data_path;
     float m_test_fraction;
     std::vector<std::string> m_output_layer;
     mutable CFFNNModel m_net{nullptr};
+    torch::Tensor m_X_min, m_X_max;  // per-feature min/max from training set
 
-    // Load pipe-separated CSV with format xB|t|Q2|E|phi|DVCSAluSinPhi|error.
-    // Used for observable-data training (chi² loss on A_LU^{sin1φ}).
-    // Returns:
-    //   X     [N, 3]  kinematics (xB, t, Q²) — raw, no scaling
-    //   E     [N]     beam energy
-    //   y_obs [N]     measured observable value (column "DVCSAluSinPhi")
-    //   sigma [N]     uncertainty (last column "error")
-    // φ is dropped because the observable is integrated over φ.
-    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-        load_data_observable() const;
+    // Load pipe-separated CSV; returns {X, y, sigma}.
+    // Features: first 3 columns (xB, t, Q2).
+    // Labels:   columns whose header matches names in m_output_layer.
+    // Sigma:    last column titled "error".
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> load_data() const;
 };

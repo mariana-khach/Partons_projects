@@ -21,6 +21,7 @@ int main(int argc, char** argv) {
             0.3f,
             {"ImH"});// can be {"ReH", "ImH","ReE", "ImE","ReHt", "ImHt","ReEt", "ImEt"}
         fitter.train_nn();
+        fitter.predict();
         fitter.observ_calc();
         fitter.observ_calc_torch();
         fitter.observ_calc_torch_scalar();
