@@ -17,8 +17,13 @@ DVCS_analysis/libtorch
 
 # My files
 DVCS_analysis/plan.txt
+DVCS_analysis/CLAUDE.md
 
+# Log files
+DVCS_analysis/bin/tmp/
 
+# Collaborator fits
+Pawel_partons_fits/
 
 # macOS files
 .DS_Store
@@ -26,7 +31,6 @@ DVCS_analysis/plan.txt
 # editor files
 #*.swp
 #*.swo
-
 
 # temporary files
 *~
