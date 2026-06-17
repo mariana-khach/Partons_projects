@@ -81,7 +81,12 @@ list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NN_CFF_fit.cpp)
 # exclude NNFit library sources from the main executable (they use libtorch)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/NN_Fit.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/CFF_NN_Fit.cpp)
-list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/DVCSCFFNNPytorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/MathIntegratorModuleTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Services/DVCS/DVCSObservableServiceTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/Run_CFF_NN_Fit.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/nn_bsa.cpp)
 
@@ -156,7 +161,13 @@ target_link_libraries(
 set_property(TARGET NN_CFF_fit PROPERTY CXX_STANDARD 17)
 
 # Run_CFF_NN_Fit executable
-add_executable(Run_CFF_NN_Fit src/Run_CFF_NN_Fit.cpp src/NNFit/CFF_NN_Fit.cpp src/NNFit/DVCSCFFNNPytorch.cpp)
+add_executable(Run_CFF_NN_Fit src/Run_CFF_NN_Fit.cpp src/NNFit/CFF_NN_Fit.cpp
+	src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.cpp
+	src/NNFit/Theory/Modules/MathIntegratorModuleTorch.cpp
+	src/NNFit/Theory/Modules/Services/DVCS/DVCSObservableServiceTorch.cpp
+	src/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.cpp)
 target_include_directories(Run_CFF_NN_Fit PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(
 	Run_CFF_NN_Fit

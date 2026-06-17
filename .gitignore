@@ -15,6 +15,9 @@
 DVCS_analysis/build/
 DVCS_analysis/libtorch
 
+# My files
+DVCS_analysis/plan.txt
+
 
 
 # macOS files
