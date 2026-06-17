@@ -15,9 +15,19 @@
 /partons-example/
 DVCS_analysis/build/
 DVCS_analysis/libtorch
+
+#.txt files that don't need tracking
 DVCS_analysis/CLAUDE.md
 DVCS_analysis/implementation.txt
+DVCS_analysis/plan.txt
 
+
+
+# Log files
+DVCS_analysis/bin/tmp/
+
+# Collaborator fits
+Pawel_partons_fits/
 
 # macOS files
 .DS_Store
@@ -25,7 +35,6 @@ DVCS_analysis/implementation.txt
 # editor files
 #*.swp
 #*.swo
-
 
 # temporary files
 *~

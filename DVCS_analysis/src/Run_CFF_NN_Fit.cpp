@@ -23,7 +23,7 @@ int main(int argc, char** argv) {
         fitter.train_nn();
         fitter.observ_calc();
         fitter.observ_calc_torch();
-        fitter.observ_calc_torch_via_service();
+        fitter.observ_calc_torch_scalar();
 
     } catch (const ElemUtils::CustomException &e) {
         pPartons->getLoggerManager()->error(e);

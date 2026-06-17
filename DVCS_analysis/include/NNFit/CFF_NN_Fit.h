@@ -37,7 +37,9 @@ public:
     void train_nn();
     void observ_calc();
     void observ_calc_torch();
-    void observ_calc_torch_via_service();
+
+    void observ_calc_torch_scalar();
+
 
 private:
     std::string m_data_path;

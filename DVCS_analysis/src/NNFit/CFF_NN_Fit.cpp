@@ -3,10 +3,13 @@
 //
 
 #include "../../include/NNFit/CFF_NN_Fit.h"
-#include "NNFit/CustomLoss.h"
-#include "NNFit/theory/Modules/CFFs/DVCS/DVCSCFFNNPytorch.h"
-#include "NNFit/theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.h"
-#include "NNFit/theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.h"
+
+#include "../../include/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.h"
+#include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSObservableTorch.h"
+#include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.h"
+#include "../../include/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.h"
+#include "../../include/NNFit/Theory/Modules/Services/DVCS/DVCSObservableServiceTorch.h"
+
 
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
 #include <partons/beans/observable/ObservableResult.h>
@@ -207,8 +210,9 @@ void CFF_NN_Fitter::observ_calc() {
     // Modules
     DVCSConvolCoeffFunctionModule* pDVCSCFF =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSConvolCoeffFunctionModule(
-                    DVCSCFFNNPytorch::classId);
-    static_cast<DVCSCFFNNPytorch*>(pDVCSCFF)->setModel(m_net, m_output_layer);
+                    DVCSCFFNNTorch::classId);
+    static_cast<DVCSCFFNNTorch*>(pDVCSCFF)->setModel(
+            m_net, m_output_layer, m_X_min, m_X_max);
 
     DVCSXiConverterModule* pDVCSXiConverter =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
@@ -258,14 +262,14 @@ void CFF_NN_Fitter::observ_calc_torch() {
     if (!m_net)
         throw std::runtime_error("Model has not been trained. Call train_nn() first.");
 
-    // ─── PARTONS modules (factory) ─────────────────────────────────────────
-    // The differentiable pipeline uses the *Torch subclasses of each module
-    // so that crossSectionAtPhiTensor / computeTensor stay inside the
-    // autograd graph from NN weights to the final asymmetry.
+
+    // Modules — the *Torch chain.
     DVCSConvolCoeffFunctionModule* pDVCSCFF =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSConvolCoeffFunctionModule(
-                    DVCSCFFNNPytorch::classId);
-    static_cast<DVCSCFFNNPytorch*>(pDVCSCFF)->setModel(m_net, m_output_layer);
+                    DVCSCFFNNTorch::classId);
+    static_cast<DVCSCFFNNTorch*>(pDVCSCFF)->setModel(
+            m_net, m_output_layer, m_X_min, m_X_max);
+
 
     DVCSXiConverterModule* pDVCSXiConverter =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
@@ -292,41 +296,51 @@ void CFF_NN_Fitter::observ_calc_torch() {
     pDVCSProcess->setConvolCoeffFunctionModule(pDVCSCFF);
     pDVCSObs->setProcessModule(pDVCSProcess);
 
-    // ─── Kinematics (matches observ_calc()) ────────────────────────────────
+
+    // Torch-aware service, fetched by name through the standard registry.
+    DVCSObservableServiceTorch* pServiceTorch =
+            static_cast<DVCSObservableServiceTorch*>(
+                    Partons::getInstance()->getServiceObjectRegistry()->get(
+                            "DVCSObservableServiceTorch"));    //get returns ServiceObject* that's why we cast down
+
+    // Cross-cast to the base tensor-observable interface (different base
+    // subobject than DVCSObservable*, so dynamic_cast). The service drives any
+    // DVCS tensor observable polymorphically through it.
+    DVCSObservableTorch* pObsTorch =
+            dynamic_cast<DVCSObservableTorch*>(pDVCSObs);
+
+    // Kinematics
     DVCSObservableKinematic dvcsKinematics(0.2, -0.2, 2., 5.932, 6.);
 
-    // ─── Tensor evaluation ─────────────────────────────────────────────────
-    // computeTensor() returns a 0-d torch::Tensor connected to the autograd
-    // graph; .item<double>() pulls the scalar value out for printing.
-    DVCSAluMinusSin1PhiTorch* pTorchObs =
-            static_cast<DVCSAluMinusSin1PhiTorch*>(pDVCSObs);
-    torch::Tensor result_tensor = pTorchObs->computeTensor(dvcsKinematics);
-    const double result = result_tensor.item<double>();
+    // Tensor path (autograd preserved); detach for printing/comparison.
+    torch::Tensor resultTensor =
+            pServiceTorch->computeSingleKinematicTorch(dvcsKinematics, pObsTorch);
+    double result = resultTensor.item<double>();
 
-    std::cout << "Observable (torch): " << pDVCSObs->getClassName() << "\n";
+    
+    std::cout << "Observable (Torch): " << pDVCSObs->getClassName() << "\n";
     std::cout << "Kinematics: xB=0.2, t=-0.2, Q2=2, E=5.932\n";
-    std::cout << "DVCSAluMinusSin1Phi (torch) = " << result << "\n";
+    std::cout << "DVCSAluMinusSin1Phi (Torch tensor path) = " << result << "\n";
+    std::cout << "  requires_grad = "
+            << (resultTensor.requires_grad() ? "true" : "false") << "\n";
 }
 
-void CFF_NN_Fitter::observ_calc_torch_via_service() {
+void CFF_NN_Fitter::observ_calc_torch_scalar() {
+
 
     using namespace PARTONS;
 
     if (!m_net)
         throw std::runtime_error("Model has not been trained. Call train_nn() first.");
 
-    // Same wiring as observ_calc(), but instantiating the *
-    // subclasses
-    // for the process and observable modules. PARTONS' DVCSObservableService
-    // still drives the computation; only the inherited scalar virtuals
-    // (CrossSectionBH/VCS/Interf on the process module, MathIntegratorModule
-    // φ-integral inside the observable) run. The tensor entry points are not
-    // touched. Purpose: verify that the *Torch subclasses remain operable
-    // through PARTONS' standard service path.
+
+    // Modules — the *Torch chain, but driven through the SCALAR pipeline.
     DVCSConvolCoeffFunctionModule* pDVCSCFF =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSConvolCoeffFunctionModule(
-                    DVCSCFFNNPytorch::classId);
-    static_cast<DVCSCFFNNPytorch*>(pDVCSCFF)->setModel(m_net, m_output_layer);
+                    DVCSCFFNNTorch::classId);
+    static_cast<DVCSCFFNNTorch*>(pDVCSCFF)->setModel(
+            m_net, m_output_layer, m_X_min, m_X_max);
+
 
     DVCSXiConverterModule* pDVCSXiConverter =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
@@ -344,22 +358,32 @@ void CFF_NN_Fitter::observ_calc_torch_via_service() {
             Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
                     DVCSAluMinusSin1PhiTorch::classId);
 
+
+    // pQCD order
     pDVCSCFF->setQCDOrderType(PerturbativeQCDOrderType::LO);
 
+    // Link modules
     pDVCSProcess->setXiConverterModule(pDVCSXiConverter);
     pDVCSProcess->setScaleModule(pDVCSScales);
     pDVCSProcess->setConvolCoeffFunctionModule(pDVCSCFF);
     pDVCSObs->setProcessModule(pDVCSProcess);
 
+
+    // Standard scalar service: drives the *Torch modules' scalar virtuals
+    // (computeObservable / computeCFF), which wrap the tensor methods under
+    // NoGradGuard + .item() — so no autograd graph is built.
     DVCSObservableService* pObservableService =
             Partons::getInstance()->getServiceObjectRegistry()->getDVCSObservableService();
 
+    // Kinematics
     DVCSObservableKinematic dvcsKinematics(0.2, -0.2, 2., 5.932, 6.);
 
+    // Evaluate (scalar return, no gradient)
     double result = pObservableService->computeSingleKinematic(
             dvcsKinematics, pDVCSObs).getValue().getValue();
 
-    std::cout << "Observable (torch-classes via service): " << pDVCSObs->getClassName() << "\n";
-    std::cout << "Kinematics: xB=0.2, t=-0.2, Q2=2, E=5.932, phi=6\n";
-    std::cout << "DVCSAluMinusSin1Phi (torch-classes via service) = " << result << "\n";
+    std::cout << "Observable (Torch, scalar): " << pDVCSObs->getClassName() << "\n";
+    std::cout << "Kinematics: xB=0.2, t=-0.2, Q2=2, E=5.932\n";
+    std::cout << "DVCSAluMinusSin1Phi (Torch scalar path) = " << result << "\n";
+
 }
