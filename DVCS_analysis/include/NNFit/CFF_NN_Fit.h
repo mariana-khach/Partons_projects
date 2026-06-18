@@ -47,9 +47,9 @@ private:
     mutable CFFNNModel m_net{nullptr};
     torch::Tensor m_X_min, m_X_max;  // per-feature min/max from training set
 
-    // Load pipe-separated CSV; returns {X, y, sigma}.
-    // Features: first 3 columns (xB, t, Q2).
-    // Labels:   columns whose header matches names in m_output_layer.
-    // Sigma:    last column titled "error".
-    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> load_data() const;
+    // Load observable-format CSV: xB|t|Q2|E|phi|<observable>|error.
+    // Returns {X[N,3]=(xB,t,Q2), E[N], phi[N], y_obs[N]=col 5, sigma[N]=last col}.
+    // Used for training directly on observable data via CustomLoss.
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
+            torch::Tensor> load_data_observable() const;
 };
