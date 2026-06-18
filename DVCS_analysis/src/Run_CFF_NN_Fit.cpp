@@ -17,7 +17,7 @@ int main(int argc, char** argv) {
         pPartons->init(argc, argv);
 
         CFF_NN_Fitter fitter(
-            "/Users/marianav/Documents/Research/Analysis/GPD_studies/Data/Partons_input/BSA_CLAS_15_KK_format_ALU_error.csv",
+            "/Users/marianav/Documents/Research/Analysis/GPD_studies/Data/Partons_input/BSA_CLAS_07_KK_format_ALU_error.csv",
             0.3f,
             {"ImH"});// can be {"ReH", "ImH","ReE", "ImE","ReHt", "ImHt","ReEt", "ImEt"}
         fitter.train_nn();
