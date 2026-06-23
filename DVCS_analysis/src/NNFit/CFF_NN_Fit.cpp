@@ -129,7 +129,7 @@ void CFF_NN_Fitter::train_nn() {
     CFFNNModel net(n_outputs);
     std::cout << "Model: 3 -> 6 (ReLU) -> " << n_outputs << "\n\n";
 
-    torch::optim::Adam optimizer(net->parameters(), torch::optim::AdamOptions(1e-4).weight_decay(1e-3));
+    torch::optim::Adam optimizer(net->parameters(), torch::optim::AdamOptions(1e-3).weight_decay(1e-3));
 
     // chi^2 loss on the observable, evaluated through the differentiable *Torch
     // chain. Shares `net` (optimizer updates propagate); scaling matches observ_calc*.

@@ -63,8 +63,12 @@ protected:
     /**
      * Select a NumA integrator. Mirrors PARTONS::MathIntegratorModule::setIntegrator().
      * @param integratorType One of TRAPEZOIDAL, TRAPEZOIDALLOG, GL, DEXP.
+     * @param nNodes For fixed-rule quadratures (TRAPEZOIDAL, GL): number of nodes
+     *               to use (calls QuadratureIntegrator1D::setN). Ignored (0) for
+     *               adaptive rules (DEXP); throws if > 0 for a non-quadrature rule.
      */
-    void setIntegrator(NumA::IntegratorType1D::Type integratorType);
+    void setIntegrator(NumA::IntegratorType1D::Type integratorType,
+            unsigned int nNodes = 0);
 
     /**
      * Differentiable integral over [a, b].

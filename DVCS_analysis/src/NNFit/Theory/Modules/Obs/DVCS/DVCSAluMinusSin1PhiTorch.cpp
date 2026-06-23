@@ -14,8 +14,11 @@ const unsigned int DVCSAluMinusSin1PhiTorch::classId =
 
 DVCSAluMinusSin1PhiTorch::DVCSAluMinusSin1PhiTorch(const std::string& className) :
         DVCSAluMinusTorch(className), MathIntegratorModuleTorch() {
-    // Same integrator as the scalar DVCSAluMinusSin1Phi.
-    MathIntegratorModuleTorch::setIntegrator(NumA::IntegratorType1D::DEXP);
+    // Fixed 10-point Gauss-Legendre over phi in [0, 2pi]. The A_LU^{sin1phi}
+    // integrand is smooth and 2pi-periodic, so a fixed rule is one batched
+    // integrand evaluation (vs DEXP's adaptive multi-level), at the cost of a
+    // tiny quadrature difference vs the scalar adaptive path.
+    MathIntegratorModuleTorch::setIntegrator(NumA::IntegratorType1D::GL, 10);
 }
 
 DVCSAluMinusSin1PhiTorch::DVCSAluMinusSin1PhiTorch(

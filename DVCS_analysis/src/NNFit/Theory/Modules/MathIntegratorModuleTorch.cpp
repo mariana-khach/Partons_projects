@@ -110,13 +110,25 @@ MathIntegratorModuleTorch::MathIntegratorModuleTorch(
 }
 
 void MathIntegratorModuleTorch::setIntegrator(
-        NumA::IntegratorType1D::Type integratorType) {
+        NumA::IntegratorType1D::Type integratorType, unsigned int nNodes) {
     if (m_mathIntegrator) {
         delete m_mathIntegrator;
         m_mathIntegrator = 0;
     }
     m_mathIntegrator = NumA::Integrator1D::newIntegrator(integratorType);
     m_integratorType = integratorType;
+
+    // For fixed-rule quadratures, set the number of nodes (computes nodes/weights).
+    if (nNodes > 0) {
+        NumA::QuadratureIntegrator1D* quad =
+                dynamic_cast<NumA::QuadratureIntegrator1D*>(m_mathIntegrator);
+        if (!quad) {
+            throw std::runtime_error(
+                    "MathIntegratorModuleTorch::setIntegrator: nNodes only applies "
+                    "to fixed-rule quadratures (TRAPEZOIDAL, GL).");
+        }
+        quad->setN(nNodes);
+    }
 }
 
 NumA::Integrator1D* MathIntegratorModuleTorch::getMathIntegrator() const {
