@@ -42,10 +42,10 @@ DVCS_analysis/
 │   └── NNFit/              # Neural-network fit subsystem
 │       ├── CFF_NN_Fit.cpp
 │       ├── NN_Fit.cpp
-│       └── theory/         # Differentiable physics layer (libtorch + PARTONS subclasses)
+│       └── Theory/         # Differentiable physics layer (libtorch + PARTONS subclasses)
 │           ├── Beans/Obs/DVCS/         # DVCSKinematicsTorch.cpp
 │           └── Modules/                # PARTONS-registered tensor modules
-│               ├── CFFs/DVCS/          # DVCSCFFNNPytorch.cpp
+│               ├── CFFs/DVCS/          # DVCSCFFNNTorch.cpp
 │               ├── Processes/DVCS/     # DVCSAmplitudesBMJ12Torch.cpp,
 │               │                       # DVCSProcessBMJ12Torch.cpp
 │               └── Obs/DVCS/           # DVCSAluMinusSin1PhiTorch.cpp
@@ -60,7 +60,7 @@ DVCS_analysis/
 └── README.md               # This file
 ```
 
-The `NNFit/theory/` layout mirrors PARTONS' own `Beans/` and `Modules/` directory hierarchy, with `CFFs`, `Processes`, and `Obs` subdivisions matching the three links of the DVCS calculation chain.
+The `NNFit/Theory/` layout mirrors PARTONS' own `Beans/` and `Modules/` directory hierarchy, with `CFFs`, `Processes`, and `Obs` subdivisions matching the three links of the DVCS calculation chain.
 
 ---
 
@@ -146,16 +146,16 @@ Implements `CFF_NN_Fitter`, the central class of the NNFit subsystem:
 - **`train_nn()`** — Adam (lr=1e-4, weight_decay=1e-3), raw (unscaled) inputs, early stopping
   (patience=200, max 10000 epochs), writes `cff_learning_curve.csv`. Drives observable
   training via `CustomLoss` (χ² between predicted A_LU and the data observable).
-- **`observ_calc()`** — plugs `m_net` into the PARTONS pipeline via `DVCSCFFNNPytorch`,
+- **`observ_calc()`** — plugs `m_net` into the PARTONS pipeline via `DVCSCFFNNTorch`,
   uses `DVCSProcessBMJ12` + `DVCSScalesQ2Multiplier` (μF²=μR²=Q²) and calls the PARTONS
   observable service to compute `DVCSAluMinusSin1Phi`.
 - **`observ_calc_torch()`** — computes the same observable through the PARTONS-registered
-  *tensor* module chain (`DVCSCFFNNPytorch` → `DVCSProcessBMJ12Torch` →
+  *tensor* module chain (`DVCSCFFNNTorch` → `DVCSProcessBMJ12Torch` →
   `DVCSAluMinusSin1PhiTorch`), keeping the entire calculation inside the libtorch autograd
   graph. Wired through `BaseObjectRegistry` exactly like `observ_calc()`, only the three
   `*Torch` subclasses are substituted in. See the 2026-05-20 section below for details.
 
-#### `src/NNFit/theory/Modules/CFFs/DVCS/DVCSCFFNNPytorch.cpp` — PARTONS CFF module wrapping a libtorch model
+#### `src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.cpp` — PARTONS CFF module wrapping a libtorch model
 A PARTONS `DVCSConvolCoeffFunctionModule` that bridges the libtorch NN and the PARTONS
 service.  Registered via `BaseObjectRegistry` at startup.  When PARTONS requests a CFF value
 for a given kinematic point, `computeCFF()`:
@@ -170,14 +170,14 @@ training targets are defined.
 
 ### Added after second commit (untracked, 2026-04-24)
 
-#### `src/NNFit/theory/Beans/Obs/DVCS/DVCSKinematicsTorch.cpp` — Kinematic precomputation (BMJ12)
+#### `src/NNFit/Theory/Beans/Obs/DVCS/DVCSKinematicsTorch.cpp` — Kinematic precomputation (BMJ12)
 Pure-C++ (no torch) computation of all φ-independent kinematic quantities for a given
 `(xB, t, Q², E)`: ε, K, K̃, lepton propagator decomposition, dipole electromagnetic form
 factors F1/F2, BH Fourier coefficients, and the full 3×3×4 angular coefficient arrays
 `C_ang` and `S_ang` for the BH-DVCS interference term following BMJ12 (arXiv:1212.6674).
 All results are stored in the `DVCSKin` struct and computed once per kinematic point.
 
-#### `src/NNFit/theory/Modules/Processes/DVCS/DVCSAmplitudesBMJ12Torch.cpp` — DVCS cross-section in libtorch
+#### `src/NNFit/Theory/Modules/Processes/DVCS/DVCSAmplitudesBMJ12Torch.cpp` — DVCS cross-section in libtorch
 Torch-tensor implementation of the BMJ12 cross-section.  CFF inputs are 0-d tensors
 connected to the autograd graph; all arithmetic stays in-graph.  Provides:
 - `computeDressedCFFs()` — helicity combinations F̂_X(j) for j=0,1,2
@@ -201,7 +201,7 @@ API. The two pipelines stay in sync by construction and can both be driven throu
 `Theory::DVCSAluMinusSin1PhiTorch` driver (which bypassed PARTONS entirely) was retired in
 favour of the new PARTONS subclass at the same file path.
 
-#### `src/NNFit/theory/Modules/CFFs/DVCS/DVCSCFFNNPytorch.cpp` — `computeCFFTensor()` added
+#### `src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.cpp` — `computeCFFTensor()` added
 Single source of truth for the NN forward pass.
 - New method:
   `std::pair<torch::Tensor, torch::Tensor> computeCFFTensor(PARTONS::GPDType::Type)`
@@ -211,13 +211,13 @@ Single source of truth for the NN forward pass.
   `NoGradGuard` + `eval()` + `computeCFFTensor(m_currentGPDComputeType)` +
   `.item<float>()` → `std::complex<double>` for PARTONS.
 
-#### `src/NNFit/theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.cpp` — new PARTONS process module
+#### `src/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.cpp` — new PARTONS process module
 PARTONS-registered subclass of `DVCSProcessBMJ12` that exposes the cross-section in tensor
 form.
 - New entry point:
   `torch::Tensor crossSectionAtPhiTensor(double phi, double beamHelicity)` returns the
   total σ(λ,φ) = σ_BH + σ_VCS + σ_Interf at a single azimuth as a 0-d tensor.
-- Internally `dynamic_cast`s the attached CFF module to `DVCSCFFNNPytorch*`, retrieves the
+- Internally `dynamic_cast`s the attached CFF module to `DVCSCFFNNTorch*`, retrieves the
   eight leading-twist CFF tensors via `computeCFFTensor(type)` (one call per H, E, Ht, Et),
   and chains `Theory::computeDressedCFFs / computeVCSCoeffs / computeInterfCoeffs /
   crossSectionAtPhi` from `DVCSAmplitudesBMJ12Torch`.
@@ -227,7 +227,7 @@ form.
 - All inherited scalar methods (`CrossSectionBH`, `CrossSectionVCS`, `CrossSectionInterf`)
   continue to work — PARTONS can drive this module through its normal scalar pipeline.
 
-#### `src/NNFit/theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.cpp` — new PARTONS observable module
+#### `src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.cpp` — new PARTONS observable module
 Replaces the previous standalone `Theory::DVCSAluMinusSin1PhiTorch`. PARTONS-registered
 subclass of `PARTONS::DVCSAluMinusSin1Phi`.
 - New entry point:
@@ -253,7 +253,7 @@ DVCSAluMinusSin1PhiTorch    (computeTensor)            — 10-pt GL quadrature o
         ↓ m_pProcessModule
 DVCSProcessBMJ12Torch       (crossSectionAtPhiTensor)  — σ(λ,φ) as 0-d tensor
         ↓ m_pConvolCoeffFunctionModule
-DVCSCFFNNPytorch            (computeCFFTensor)         — NN CFFs as 0-d tensors
+DVCSCFFNNTorch            (computeCFFTensor)         — NN CFFs as 0-d tensors
 ```
 
 Each module is PARTONS-registered; PARTONS still dispatches through the inherited scalar
@@ -271,6 +271,192 @@ Both pipelines evaluated at the same kinematics (xB=0.2, t=-0.2, Q²=2, E=5.932)
 The ~1-in-6th-sig-fig difference is the quadrature method (PARTONS' adaptive
 `MathIntegratorModule` vs. fixed 10-point Gauss–Legendre on the tensor path), not a
 physics difference.
+
+---
+
+### Torch observable chain — link-for-link mirror of the scalar path (2026-06-16)
+
+The differentiable pipeline was reworked into a Torch chain that is **structurally
+identical, link-for-link, to PARTONS' scalar chain**: every scalar link has a torch twin
+with the same role, so gradients (∂A_LU/∂NN-weights) flow end-to-end while each class stays
+a drop-in for the scalar pipeline.  `DVCSCFFNNPytorch` was also renamed **`DVCSCFFNNTorch`**
+in this rework.
+
+**Generic, channel-agnostic templates** (tensor twins of PARTONS' `Observable<K,R>` /
+`ProcessModule<K,R>` / `ObservableService<K,R>`; `ResultType` collapses to `torch::Tensor`,
+so only `KinematicType` is templated):
+
+- **`ObservableTorch<K>`** — NVI idiom mirroring scalar `compute`/`computeObservable`:
+  public `computeTensor()` delegates to the protected pure-virtual `computeTensorImpl()`.
+- **`ProcessModuleTorch<K>`** — channel-agnostic process skeleton.
+- **`ObservableServiceTorch<K>`** — a **mixin** (not a base) adding the tensor driver
+  `computeSingleKinematicTorch(kin, ObservableTorch<K>*)`, layered onto the existing PARTONS
+  service.
+
+**DVCS channel layer** (each twin sits next to its scalar counterpart):
+
+```
+ObservableServiceTorch::computeSingleKinematicTorch   ↔  ObservableService::computeSingleKinematic
+ObservableTorch::computeTensor (template method)       ↔  Observable::compute
+   computeTensorImpl (hook)                            ↔     computeObservable
+DVCSAluMinusTorch::aLUTensor (pointwise)               ↔  DVCSAluMinus::computeObservable
+DVCSProcessModuleTorch::crossSectionTensor (Σ, sel.)   ↔  DVCSProcessModule::compute(…,VCSSubProcessType)
+   crossSectionBH/VCS/InterfTensor                     ↔     CrossSectionBH/VCS/Interf
+   setupKinematicsTorch                                ↔     setKinematics + CFF forward
+DVCSCFFNNTorch::computeAllCFFsTensor                   ↔  DVCSCFFNNTorch::computeCFF
+```
+
+`DVCSObservableServiceTorch` inherits `PARTONS::DVCSObservableService` (putting it on the
+registrable `ServiceObject` branch, reusing the full scalar machinery) and mixes in
+`ObservableServiceTorch<DVCSObservableKinematic>` for the tensor driver; it self-registers in
+`BaseObjectRegistry` and is fetched by name.
+
+**Dual-use (single source of truth = the tensor method).**  Each module's scalar virtual
+wraps its tensor twin under `NoGradGuard` + `.item()` (`computeCFF()`→`computeCFFTensor`,
+`computeObservable()`→`computeTensor`), so the *same* registered classes serve both the
+differentiable path and PARTONS' ordinary scalar pipeline.  Three verification paths in
+`CFF_NN_Fit.cpp` — base PARTONS scalar, `*Torch` scalar virtuals, and `*Torch` tensor entry
+points — agree to every printed digit, with `requires_grad = true` preserved on the tensor
+path.
+
+> **Coverage caveat:** only the **unpolarized-target** BMJ12 sector is ported (valid for
+> A_LU and siblings).  For polarized-target observables use the base PARTONS classes — a
+> `*Torch` leaf's scalar path silently runs the unpolarized port.  See `CLAUDE.md`.
+
+---
+
+### Integration speedup — DExp → 10-point Gauss–Legendre (2026-06-22)
+
+The φ-integration twin **`MathIntegratorModuleTorch`** (a libtorch counterpart of
+`PARTONS::MathIntegratorModule`, inherited by `DVCSAluMinusSin1PhiTorch`) replaces the
+hard-coded φ-loop with a configurable, **gradient-preserving** quadrature.  Every supported
+rule reduces to `∫ = Σ wᵢ f(xᵢ)` with **constant** nodes/weights (no dependence on NN
+parameters), so the autograd graph flows entirely through `f(xᵢ)`.
+
+The leaf was switched from the adaptive **double-exponential (DEXP)** rule to a fixed
+**10-point Gauss–Legendre (GL)** rule:
+
+```cpp
+// DVCSAluMinusSin1PhiTorch constructor
+// was: MathIntegratorModuleTorch::setIntegrator(NumA::IntegratorType1D::DEXP);
+MathIntegratorModuleTorch::setIntegrator(NumA::IntegratorType1D::GL, 10);
+```
+
+**Why:** the `A_LU^{sin1φ}` integrand is smooth and 2π-periodic, so a fixed rule needs **one
+batched integrand evaluation** (all φ nodes at once) versus DEXP's adaptive multi-level
+`L+1` evaluations.  The GL nodes/weights come from NumA's Gauss–Legendre rule generator
+(roots of `P₁₀`, `wᵢ = 2/[(1−xᵢ²)P₁₀′(xᵢ)²]`); `MathIntegratorModuleTorch` reads them via
+`getNodes()/getWeights()` and remaps onto `[0, 2π]`.
+
+**Verification** (xB=0.2, t=−0.2, Q²=2, E=5.932):
+
+| Path | Quadrature | A_LU^{sin1φ} |
+|---|---|---|
+| `observ_calc()` (base PARTONS, scalar) | DEXP adaptive | −0.00895582 |
+| `observ_calc_torch()` (torch tensor path) | **GL-10** | −0.00895585 |
+| `observ_calc_torch_scalar()` (torch scalar virtuals) | GL-10 | −0.00895585 |
+
+GL-10 reproduces the DEXP value to ~6 significant figures (~3×10⁻⁸ absolute) — far below
+fit/measurement precision — while collapsing the φ-integral to a single batched evaluation.
+The swap is per-observable: re-validate GL vs DEXP before reusing it for a different
+integrand.
+
+---
+
+### Batch computation — PLANNED, NOT YET IMPLEMENTED (branch `6-speedup_via_vectorized_batchobscalc`)
+
+> **Status:** this section describes *future* design only. Batching across data points is
+> **not implemented**. The training loop still processes data points **one at a time**
+> (`CustomLoss::forward` loops the rows and calls `computeSingleKinematicTorch` per point).
+> The two speedups actually done so far are listed under **"Speedup work completed"** below.
+
+The GL swap (done) is the **prerequisite for vectorizing across data points**.  DEXP's
+refinement level is chosen adaptively *per kinematic point*, so it cannot fit a single
+static `[N, M]` φ grid; a fixed GL rule gives the **same M φ nodes for every point**, which
+is exactly what batching would need.
+
+The (unimplemented) planned design would push the batch dimension **down into the existing
+reusable layers** (rather than a monolithic batch entry point):
+
+- kinematics carried as `[N]` tensors, one `[N,3]` NN forward, cross-sections as `[N,M]`,
+  the φ-integral reduced over the shared grid;
+- a batched sibling method on each module (alongside the scalar virtual and the
+  single-kinematic tensor method) plus a `computeManyKinematicTorch` service driver,
+  mirroring the scalar `computeSingleKinematic ↔ computeManyKinematic` pair;
+- adding a new observable then means writing only its thin batched leaf — everything below
+  is reused.
+
+It would be **data parallelism**: the multicore speedup would come for free from ATen's
+intra-op threading on the batched tensor ops, the graph built once with a **single
+deterministic `backward()`**, and the path GPU-ready — without the gradient-accumulation
+races of a hand-threaded per-point loop.  The work would be purely additive: the scalar
+virtuals and the single-kinematic tensor chain untouched.
+
+---
+
+### Speedup work completed (vs. planned)
+
+To be unambiguous about what is actually in the code:
+
+| Speedup | Status | What it does |
+|---|---|---|
+| **Fixed GL-10 integrator** (was DEXP) | ✅ **done** | One batched φ-integrand evaluation instead of DEXP's adaptive `L+1` levels (per A_LU computation) |
+| **Hoist setup — #1** (prepare/assemble split) | ✅ **done** | The φ- and helicity-independent kinematic factors + CFFs are computed **once per kinematic point** instead of once per beam helicity (twice) |
+| **Batch across data points (#3 vectorization)** | ❌ **not implemented** | Would replace the per-point loop with `[N,…]` batched tensor ops (design above) |
+
+So, concretely, the speedup achieved to date is: (1) the **integrator change**
+(DEXP → fixed 10-point Gauss–Legendre), and (2) computing the **φ- and helicity-independent
+kinematic factors once per kinematic point** (#1). Per-data-point batching is still future
+work; training remains a serial loop over the data points.
+
+---
+
+### Hoist setup — prepare/assemble split (#1, 2026-06-24)
+
+A standalone per-point speedup that also de-risks the batched work above.  The torch
+asymmetry `DVCSAluMinusTorch::aLUTensor` evaluates the cross section for **both** beam
+helicities (λ=±1) to form `A_LU = (σ⁺−σ⁻)/(σ⁺+σ⁻)`.  Previously each call re-ran the whole
+φ-independent setup — **one NN forward + the BMJ12 kinematic block + 72 angular
+coefficients** — so that helicity-independent work executed **twice per data point**.  (The
+scalar PARTONS path has the same two-helicity structure but dodges the cost via CFF caching;
+the torch path can't cache without severing the autograd graph, so it hoists instead.)
+
+The monolithic `crossSectionTensor` was split into **prepare + assemble** in
+`DVCSProcessModuleTorch`:
+
+- **`prepareTensor(kin)`** — runs the φ-/helicity-independent `setupKinematicsTorch` once
+  (sets an `m_prepared` guard);
+- **lightweight `crossSectionTensor(λ, charge, φ[, processType])`** — assumes prepare ran;
+  only sums the requested sub-processes (BH/VCS/INT);
+- **self-contained `crossSectionTensor(λ, charge, kin, φ[, processType])`** — kept for
+  single-shot callers, now delegates (`prepareTensor` → lightweight assemble).
+
+`aLUTensor` now calls `prepareTensor(kin)` **once**, then the lightweight overload per
+helicity:
+
+```cpp
+pProc->prepareTensor(kinematic);                            // setup ONCE
+auto sigmaPlus  = pProc->crossSectionTensor(+1., -1., phi); // assemble only
+auto sigmaMinus = pProc->crossSectionTensor(-1., -1., phi); // assemble only
+```
+
+So the NN forward + 72-coefficient build + kinematic block run **once** per point instead of
+twice.  The split changes only scheduling — the physics and the per-link chain structure are
+untouched — and it is the exact prepare/assemble factoring the batched path (#3) lifts to
+`[N]` tensors.  Two source files changed: `DVCSProcessModuleTorch.h`,
+`DVCSAluMinusTorch.cpp`.
+
+**Verification** (fresh-seeded NN; only cross-path agreement matters):
+
+| Path | A_LU^{sin1φ} | grad |
+|---|---|---|
+| `observ_calc()` (base PARTONS, scalar) | 0.089754 | — |
+| `observ_calc_torch()` (torch tensor path) | 0.0897542 | `requires_grad = true` |
+| `observ_calc_torch_scalar()` (torch scalar virtuals) | 0.0897542 | — |
+
+All three agree to every printed digit and the tensor path keeps its gradient (the single
+shared CFF forward feeding both helicities gives an identical value and gradient by the chain
+rule).
 
 ---
 
