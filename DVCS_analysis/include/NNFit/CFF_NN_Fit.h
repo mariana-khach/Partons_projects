@@ -52,4 +52,9 @@ private:
     // Used for training directly on observable data via CustomLoss.
     std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
             torch::Tensor> load_data_observable() const;
+
+    // Export the trained NN (fc1/fc2 weights+biases, min-max scaling, output
+    // labels) as JSON, so the exact forward can be reproduced out-of-process
+    // (e.g. CFF scans/plots in Python). Written by predict() to cff_model.json.
+    void export_model_json(const std::string& path) const;
 };

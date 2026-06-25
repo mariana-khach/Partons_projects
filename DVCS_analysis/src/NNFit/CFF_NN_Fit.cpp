@@ -288,6 +288,69 @@ void CFF_NN_Fitter::predict() {
     std::cout << pDVCSObs->getClassName() << " | MSE: " << mse
               << " | R²: " << r2 << " | chi2: " << chi2 << "\n";
     std::cout << "Model evaluation written to obs_model_eval.csv\n";
+
+    // Persist the trained model (weights + scaling + labels) for out-of-process
+    // CFF scans/plots (read by CFF_obs_train_predict_plot.ipynb).
+    export_model_json(out_dir + "/cff_model.json");
+}
+
+void CFF_NN_Fitter::export_model_json(const std::string& path) const {
+
+    if (!m_net)
+        throw std::runtime_error("Model has not been trained. Call train_nn() first.");
+
+    // PyTorch nn::Linear stores weight as [out, in] and computes y = x W^T + b.
+    const torch::Tensor W1 = m_net->fc1->weight;   // [hidden, in]  = [6, 3]
+    const torch::Tensor b1 = m_net->fc1->bias;     // [hidden]      = [6]
+    const torch::Tensor W2 = m_net->fc2->weight;   // [out, hidden] = [n, 6]
+    const torch::Tensor b2 = m_net->fc2->bias;     // [out]         = [n]
+
+    std::ofstream js(path, std::ios::trunc);
+    if (!js)
+        throw std::runtime_error("Cannot open cff_model.json for writing: " + path);
+    js << std::setprecision(9);  // enough to round-trip float32
+
+    auto vec = [&](const torch::Tensor& v) {
+        const torch::Tensor f = v.flatten().to(torch::kFloat32);
+        js << "[";
+        for (int i = 0; i < f.size(0); ++i)
+            js << (i ? "," : "") << f[i].item<float>();
+        js << "]";
+    };
+    auto mat = [&](const torch::Tensor& m) {
+        const torch::Tensor f = m.to(torch::kFloat32);
+        js << "[";
+        for (int i = 0; i < f.size(0); ++i) {
+            js << (i ? "," : "") << "[";
+            for (int j = 0; j < f.size(1); ++j)
+                js << (j ? "," : "") << f[i][j].item<float>();
+            js << "]";
+        }
+        js << "]";
+    };
+
+    js << "{\n";
+    js << "  \"arch\": {\"in\": " << W1.size(1) << ", \"hidden\": " << W1.size(0)
+       << ", \"out\": " << W2.size(0) << ", \"activation\": \"tanh\"},\n";
+    js << "  \"dtype\": \"float32\",\n";
+    js << "  \"input_features\": [\"xB\", \"t\", \"Q2\"],\n";
+
+    js << "  \"output_layer\": [";
+    for (size_t k = 0; k < m_output_layer.size(); ++k)
+        js << (k ? "," : "") << "\"" << m_output_layer[k] << "\"";
+    js << "],\n";
+
+    js << "  \"scaling\": {\n    \"x_min\": ";
+    if (m_X_min.defined()) vec(m_X_min); else js << "null";
+    js << ",\n    \"x_max\": ";
+    if (m_X_max.defined()) vec(m_X_max); else js << "null";
+    js << "\n  },\n";
+
+    js << "  \"fc1\": {\"weight\": "; mat(W1); js << ", \"bias\": "; vec(b1); js << "},\n";
+    js << "  \"fc2\": {\"weight\": "; mat(W2); js << ", \"bias\": "; vec(b2); js << "}\n";
+    js << "}\n";
+
+    std::cout << "Model exported to cff_model.json\n";
 }
 
 void CFF_NN_Fitter::observ_calc() {

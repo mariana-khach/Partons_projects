@@ -50,8 +50,12 @@ torch::Tensor DVCSAluMinusTorch::aLUTensor(
 
     DVCSProcessModuleTorch* pProc = torchProcessModule();
 
-    torch::Tensor sigmaPlus = pProc->crossSectionTensor(+1., -1., kinematic, phi);
-    torch::Tensor sigmaMinus = pProc->crossSectionTensor(-1., -1., kinematic, phi);
+    // Hoist the phi-/helicity-independent setup (one NN forward + BMJ12
+    // kinematics + 72 angular coeffs) out of the per-helicity calls: prepare
+    // once, then assemble sigma for each beam helicity from the cached state.
+    pProc->prepareTensor(kinematic);
+    torch::Tensor sigmaPlus = pProc->crossSectionTensor(+1., -1., phi);
+    torch::Tensor sigmaMinus = pProc->crossSectionTensor(-1., -1., phi);
 
     return (sigmaPlus - sigmaMinus) / (sigmaPlus + sigmaMinus);
 }
