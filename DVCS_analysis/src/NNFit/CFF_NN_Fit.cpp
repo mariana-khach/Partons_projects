@@ -129,7 +129,7 @@ void CFF_NN_Fitter::train_nn() {
     CFFNNModel net(n_outputs);
     std::cout << "Model: 3 -> 6 (ReLU) -> " << n_outputs << "\n\n";
 
-    torch::optim::Adam optimizer(net->parameters(), torch::optim::AdamOptions(1e-3).weight_decay(1e-3));
+    torch::optim::Adam optimizer(net->parameters(), torch::optim::AdamOptions(1e-2).weight_decay(1e-3));
 
     // chi^2 loss on the observable, evaluated through the differentiable *Torch
     // chain. Shares `net` (optimizer updates propagate); scaling matches observ_calc*.
@@ -141,14 +141,29 @@ void CFF_NN_Fitter::train_nn() {
     float     best_val_loss  = std::numeric_limits<float>::max();
     int       patience_count = 0;
 
+    // Snapshot of the parameters at the best validation loss, restored into the
+    // net at the end of training — so the stored model is the one early stopping
+    // selected, not the last epoch (which is up to `patience` steps past it).
+    std::vector<torch::Tensor> best_params;
+    auto snapshot_params = [&]() {
+        best_params.clear();
+        for (const auto& p : net->parameters())
+            best_params.push_back(p.detach().clone());
+    };
+    auto restore_best = [&]() {
+        torch::NoGradGuard no_grad;
+        std::vector<torch::Tensor> params = net->parameters();
+        for (size_t i = 0; i < best_params.size(); ++i)
+            params[i].copy_(best_params[i]);
+        m_best_val_loss = best_val_loss;
+    };
+
     const std::string out_dir = "/Users/marianav/Documents/Research/Analysis/GPD_studies/git/Partons/DVCS_analysis/My_Analysis/Partons_output";
 
-    {
-        std::ofstream csv_init(out_dir + "/cff_learning_curve.csv", std::ios::trunc);
-        if (!csv_init)
-            throw std::runtime_error("Cannot open cff_learning_curve.csv for writing in: " + out_dir);
-        csv_init << "epoch,train_loss,val_loss\n";
-    }
+    std::ofstream csv(out_dir + "/cff_learning_curve.csv", std::ios::trunc);
+    if (!csv)
+        throw std::runtime_error("Cannot open cff_learning_curve.csv for writing in: " + out_dir);
+    csv << "epoch,train_loss,val_loss\n";
 
     for (int epoch = 1; epoch <= max_epochs; ++epoch) {
 
@@ -172,21 +187,21 @@ void CFF_NN_Fitter::train_nn() {
                       << " | Train loss: " << std::setw(12) << loss_train.item<float>()
                       << " | Val loss: "   << std::setw(12) << val_loss << "\n";
 
-            std::ofstream csv(out_dir + "/cff_learning_curve.csv", std::ios::app);
-            if (!csv)
-                throw std::runtime_error("Cannot open cff_learning_curve.csv for appending in: " + out_dir);
             csv << epoch << "," << loss_train.item<float>() << "," << val_loss << "\n";
+            csv.flush();  // keep the learning curve live-tailable without reopening the file
         }
 
         // Early stopping check
         if (val_loss < best_val_loss) {
             best_val_loss  = val_loss;
             patience_count = 0;
+            snapshot_params();
         } else {
             ++patience_count;
             if (patience_count >= patience) {
                 std::cout << "\nEarly stopping at epoch " << epoch
                           << " | Best val loss: " << best_val_loss << "\n";
+                restore_best();
                 m_net = net;
                 return;
             }
@@ -194,6 +209,7 @@ void CFF_NN_Fitter::train_nn() {
     }
 
     std::cout << "\nTraining complete | Best val loss: " << best_val_loss << "\n";
+    restore_best();
     m_net = net;
 }
 
@@ -333,6 +349,7 @@ void CFF_NN_Fitter::export_model_json(const std::string& path) const {
     js << "  \"arch\": {\"in\": " << W1.size(1) << ", \"hidden\": " << W1.size(0)
        << ", \"out\": " << W2.size(0) << ", \"activation\": \"tanh\"},\n";
     js << "  \"dtype\": \"float32\",\n";
+    js << "  \"best_val_chi2\": " << m_best_val_loss << ",\n";
     js << "  \"input_features\": [\"xB\", \"t\", \"Q2\"],\n";
 
     js << "  \"output_layer\": [";

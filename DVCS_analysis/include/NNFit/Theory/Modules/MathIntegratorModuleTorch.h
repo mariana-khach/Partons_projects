@@ -114,6 +114,14 @@ private:
 
     NumA::Integrator1D* m_mathIntegrator;          ///< Owned NumA integrator.
     NumA::IntegratorType1D::Type m_integratorType; ///< Selected type (drives dispatch).
+
+    // Cached fixed-rule (GL/TRAPEZOIDAL) reference nodes/weights, converted from
+    // NumA once and reused across integrateTorch() calls instead of rebuilt every
+    // call. Constant tensors (no grad). Cleared by setIntegrator() on a rule
+    // change; integrateTorchQuadrature() also rebuilds them if the node count
+    // changes (e.g. N retuned via getMathIntegrator()).
+    mutable torch::Tensor m_quadNodes;   ///< Reference quadrature nodes [M].
+    mutable torch::Tensor m_quadWeights; ///< Matching quadrature weights [M].
 };
 
 #endif /* MATH_INTEGRATOR_MODULE_TORCH_H */

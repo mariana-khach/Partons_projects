@@ -101,7 +101,9 @@ MathIntegratorModuleTorch::~MathIntegratorModuleTorch() {
 
 MathIntegratorModuleTorch::MathIntegratorModuleTorch(
         const MathIntegratorModuleTorch& other) :
-        m_integratorType(other.m_integratorType) {
+        m_integratorType(other.m_integratorType),
+        m_quadNodes(other.m_quadNodes),
+        m_quadWeights(other.m_quadWeights) {
     if (other.m_mathIntegrator) {
         m_mathIntegrator = other.m_mathIntegrator->clone();
     } else {
@@ -117,6 +119,11 @@ void MathIntegratorModuleTorch::setIntegrator(
     }
     m_mathIntegrator = NumA::Integrator1D::newIntegrator(integratorType);
     m_integratorType = integratorType;
+
+    // Drop any cached fixed-rule nodes/weights; integrateTorchQuadrature() rebuilds
+    // them on next use for the new rule/configuration.
+    m_quadNodes = torch::Tensor();
+    m_quadWeights = torch::Tensor();
 
     // For fixed-rule quadratures, set the number of nodes (computes nodes/weights).
     if (nNodes > 0) {
@@ -190,15 +197,25 @@ torch::Tensor MathIntegratorModuleTorch::integrateTorchQuadrature(
                 "inconsistent nodes/weights; set the number of nodes first.");
     }
 
+    // Convert the (constant) reference nodes/weights to tensors once and reuse
+    // them across calls. Rebuild only if the cache is empty or the node count
+    // changed (e.g. N retuned via getMathIntegrator()); setIntegrator() clears it
+    // on a rule change. These tensors carry no gradient.
+    if (!m_quadNodes.defined()
+            || m_quadNodes.size(0) != static_cast<int64_t>(refNodes.size())) {
+        m_quadNodes = torch::tensor(refNodes, kF64);
+        m_quadWeights = torch::tensor(refWeights, kF64);
+    }
+
     const double c = 0.5 * (b - a);
     const double d = 0.5 * (a + b);
 
-    torch::Tensor nodes = torch::tensor(refNodes, kF64);
-    torch::Tensor weights = torch::tensor(refWeights, kF64);
-    torch::Tensor x = d + c * nodes;
+    // Only the [a, b] remap is per-call (depends on the bounds); the cached
+    // reference nodes/weights are reused as-is.
+    torch::Tensor x = d + c * m_quadNodes;
 
     torch::Tensor fvals = pFunction(x);
-    return (weights.to(fvals.options()) * fvals).sum() * c;
+    return (m_quadWeights.to(fvals.options()) * fvals).sum() * c;
 }
 
 // Log-spaced trapezoid: matches NumA::TrapezoidalLogIntegrator1D::integrate().

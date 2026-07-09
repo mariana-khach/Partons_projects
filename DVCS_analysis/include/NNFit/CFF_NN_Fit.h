@@ -46,6 +46,7 @@ private:
     std::vector<std::string> m_output_layer;
     mutable CFFNNModel m_net{nullptr};
     torch::Tensor m_X_min, m_X_max;  // per-feature min/max from training set
+    float m_best_val_loss = -1.f;    // val chi2 of the snapshot stored in m_net
 
     // Load observable-format CSV: xB|t|Q2|E|phi|<observable>|error.
     // Returns {X[N,3]=(xB,t,Q2), E[N], phi[N], y_obs[N]=col 5, sigma[N]=last col}.
