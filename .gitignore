@@ -3,6 +3,9 @@
 *.so
 *.dylib
 *.exe
+*.csv
+*.png
+**/.ipynb_checkpoints/
 
 # ROOT files
 *.root

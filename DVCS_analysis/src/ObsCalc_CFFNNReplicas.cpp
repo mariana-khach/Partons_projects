@@ -270,12 +270,10 @@ void analysisANN_ManyKin() {
             << getMean(results.at(j))  << ","
             << getSigma(results.at(j)) << "\n";
 
-
-    if (j == 3) {
     for (const double& val : results.at(j)) {
         out1 << std::fixed << std::setprecision(6) << val << "\n";
     }
-    }
+
 
     }
 

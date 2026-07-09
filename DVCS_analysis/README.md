@@ -52,7 +52,10 @@ DVCS_analysis/
 ├── include/                # Headers mirroring src/
 ├── bin/                    # Compiled executables (CMake output)
 ├── My_Analysis/
-│   └── Partons_output/     # CSV output files from fits and predictions
+│   ├── Codes/              # Analysis notebooks (plot learning curves, predictions, CFF scans)
+│   │   ├── CFF_obs_train_predict_plot.ipynb
+│   │   └── Obs_NN_train_predict_plot.ipynb
+│   └── Partons_output/     # CSV/JSON output files from fits and predictions
 ├── libtorch/               # Bundled libtorch installation
 ├── cmake/Modules/          # Find-modules for external libraries
 ├── CMakeLists.txt
@@ -98,8 +101,9 @@ Two analysis functions are provided:
 - `analysisANN_ManyKin()` — loops over all kinematic points from the CLAS15 BSA dataset,
   accumulates per-replica results, removes outliers (3σ cut, applied recursively), and writes
   per-point mean ± σ to `dvcs_DVCSAluSinPhi_BSACLAS15_ANN.csv`.  Individual replica values
-  for the 4th kinematic point (`j==3`) are written separately to
-  `dvcs_DVCSAluSinPhi_ANN_replicas.csv` for diagnostic purposes.
+  for **every** kinematic point are written separately to
+  `dvcs_DVCSAluSinPhi_ANN_replicas.csv` for diagnostic purposes (originally only the 4th
+  point, `j==3`; fixed on branch `adding_replicas`, 2026-07).
 
 #### `src/dcgan.cpp` — libtorch smoke test
 Minimal DCGAN implementation from the official PyTorch C++ tutorial.  Used to verify that the
@@ -143,9 +147,10 @@ BSA dataset, runs the workflow:
 #### `src/NNFit/CFF_NN_Fit.cpp` — CFF fitter with full observable pipeline
 Implements `CFF_NN_Fitter`, the central class of the NNFit subsystem:
 
-- **`train_nn()`** — Adam (lr=1e-4, weight_decay=1e-3), raw (unscaled) inputs, early stopping
-  (patience=200, max 10000 epochs), writes `cff_learning_curve.csv`. Drives observable
-  training via `CustomLoss` (χ² between predicted A_LU and the data observable).
+- **`train_nn()`** — Adam (lr=1e-2, weight_decay=1e-3), raw (unscaled) inputs, early stopping
+  (patience=200, max 10000 epochs) with best-validation parameter restore, writes
+  `cff_learning_curve.csv`. Drives observable training via `CustomLoss` (χ² between
+  predicted A_LU and the data observable).
 - **`observ_calc()`** — plugs `m_net` into the PARTONS pipeline via `DVCSCFFNNTorch`,
   uses `DVCSProcessBMJ12` + `DVCSScalesQ2Multiplier` (μF²=μR²=Q²) and calls the PARTONS
   observable service to compute `DVCSAluMinusSin1Phi`.
@@ -460,6 +465,65 @@ rule).
 
 ---
 
+### Trained-model export + CFF scans (2026-06-29)
+
+`CFF_NN_Fitter::predict()` now exports the trained network so the CFFs can be scanned and
+plotted out-of-process:
+
+- **`export_model_json()`** writes `cff_model.json` — `arch`, `dtype`, `input_features`,
+  `output_layer` (the CFF labels = `m_output_layer`), the min-max `scaling` (`x_min`/`x_max`),
+  and the `fc1`/`fc2` weights+biases (`[out, in]` orientation, `y = x Wᵀ + b`). This lets the
+  exact NN forward be reproduced in Python with **numpy only** (no torch dependency):
+  `tanh((x − xmin)/(xmax − xmin) @ W1ᵀ + b1) @ W2ᵀ + b2`. JSON was chosen over `.pt` because a
+  hand-written C++ `nn::Module` doesn't cross cleanly to Python (except via TorchScript) and
+  the net is tiny, so the numpy forward is trivial (validated to ~5×10⁻⁶ against the C++
+  outputs).
+- The notebook **`CFF_obs_train_predict_plot.ipynb`** gained a CFF-scan section: it loads
+  `cff_model.json`, reproduces the forward, and plots **CFFs vs xB** (fixed t, Q²) and
+  **CFFs vs −t** (fixed xB, Q²) with the fixed kinematics annotated, saving each to PNG. One
+  line per CFF in `output_layer`.
+
+### Integrator node caching (2026-06-29)
+
+`MathIntegratorModuleTorch` now **caches** the fixed-rule (GL/TRAPEZOIDAL) reference
+nodes/weights as `mutable` member tensors, converted from NumA once and reused across
+`integrateTorch()` calls instead of rebuilt every call; only the `[a, b]` remap runs per call.
+Rebuilt if the node count changes and cleared by `setIntegrator` on a rule change. A pure
+caching optimization — **value-preserving** (the three `observ_calc*` paths still agree). For
+GL-10 the saving is tiny; it matters more at high node counts. (DEXP already used its
+program-wide static `dExpTables()`; TRAPEZOIDALLOG is inherently per-`[a, b]`.)
+
+---
+
+### Branch `adding_replicas` — training robustness + replica-output groundwork (2026-07)
+
+Preparatory changes for the planned CFF-uncertainty replica ensemble (train N replicas on
+Monte-Carlo-fluctuated data, band = mean ± σ in Python), plus training quality-of-life fixes:
+
+- **Best-validation model snapshot in `train_nn()`** — the parameters are snapshotted
+  (`p.detach().clone()`) every time the validation χ² improves and restored into the net when
+  training ends (early stop *or* max-epochs). The stored model is now the one early stopping
+  actually selected, not the last epoch's weights (which are up to `patience` = 200 steps past
+  the optimum). The selected validation χ² is kept in `m_best_val_loss` and exported by
+  `export_model_json()` as a new **`best_val_chi2`** field in `cff_model.json`.
+- **Learning rate raised** — Adam lr 1e-3 → **1e-2** (weight_decay unchanged at 1e-3).
+- **Live-tailable learning curve** — `cff_learning_curve.csv` is opened once and flushed after
+  each write instead of reopened per logging step, so `tail -f` works during a long run.
+- **Per-replica output fix in `ObsCalc_CFFNNReplicas`** — `analysisANN_ManyKin()` now writes
+  the individual replica values for **every** kinematic point to
+  `dvcs_DVCSAluSinPhi_ANN_replicas.csv` (previously only the 4th point, `j==3`). Closes the
+  per-replica-capture task open since 2026-04-24.
+- **Notebooks moved to `My_Analysis/Codes/`** — `CFF_obs_train_predict_plot.ipynb` and
+  `Obs_NN_train_predict_plot.ipynb` now live in a dedicated code directory and read their
+  inputs from `../Partons_output/`. The CFF notebook also reports the best validation χ²
+  from `cff_model.json` (falling back to the learning-curve minimum for older exports that
+  predate the `best_val_chi2` field).
+- **Repo hygiene** — `.gitignore` now excludes `*.csv`, `*.png`, and `.ipynb_checkpoints/`;
+  the `*_beforespeedup` snapshot CSVs and the CFF-scan PNGs were removed from tracking
+  (they are regenerated outputs).
+
+---
+
 ## Build
 
 ```bash
@@ -497,11 +561,14 @@ libtorch is bundled locally at `libtorch/`.  All others are found via `cmake/Mod
 
 ## Output files (`My_Analysis/Partons_output/`)
 
-| File | Content |
-|---|---|
-| `cff_learning_curve.csv` | epoch, train_loss, val_loss (every 2 epochs) |
-| `dvcs_DVCSAluSinPhi_BSACLAS15_ANN.csv` | Mean ± σ observable per kinematic point (replica ensemble, from `ObsCalc_CFFNNReplicas`) |
-| `dvcs_DVCSAluSinPhi_ANN_replicas.csv` | Individual replica values at kinematic point j=3 (from `ObsCalc_CFFNNReplicas`) |
+| File | Content | Written by |
+|---|---|---|
+| `cff_learning_curve.csv` | epoch, train χ², val χ² (every 2 epochs) | `train_nn()` |
+| `obs_prediction.csv` | `xB,t,Q2,E,phi,obs_true,obs_pred,error` per point | `predict()` |
+| `obs_model_eval.csv` | `observable,mse,r_squared,chi2` | `predict()` |
+| `cff_model.json` | trained NN export (`arch`, `dtype`, `best_val_chi2`, `input_features`, `output_layer`, min-max `scaling`, `fc1`/`fc2` weights+biases) — reproduces the exact forward in Python | `predict()` |
+| `dvcs_DVCSAluSinPhi_BSACLAS15_ANN.csv` | Mean ± σ observable per kinematic point (replica ensemble, from `ObsCalc_CFFNNReplicas`) | `ObsCalc_CFFNNReplicas` |
+| `dvcs_DVCSAluSinPhi_ANN_replicas.csv` | Individual replica values for every kinematic point (from `ObsCalc_CFFNNReplicas`) | `ObsCalc_CFFNNReplicas` |
 
 ---
 
