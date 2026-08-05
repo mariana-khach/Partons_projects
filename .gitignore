@@ -17,7 +17,9 @@
 /Pawel_partons_fits/
 /partons-example/
 DVCS_analysis/build/
-DVCS_analysis/libtorch
+DVCS_analysis/libtorch/
+DVCS_analysis/bin/
+DVCS_analysis/.idea/
 
 #.txt files that don't need tracking
 DVCS_analysis/CLAUDE.md

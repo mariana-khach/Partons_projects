@@ -35,10 +35,12 @@
 
 CFF_NN_Fitter::CFF_NN_Fitter(const std::string& data_path,
                                float test_fraction,
-                               const std::vector<std::string>& output_layer)
+                               const std::vector<std::string>& output_layer,
+                               double x_pow)
     : m_data_path(data_path),
       m_test_fraction(test_fraction),
-      m_output_layer(output_layer) {}
+      m_output_layer(output_layer),
+      m_xPow(x_pow) {}
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
         torch::Tensor> CFF_NN_Fitter::load_data_observable() const {
@@ -129,11 +131,11 @@ void CFF_NN_Fitter::train_nn() {
     CFFNNModel net(n_outputs);
     std::cout << "Model: 3 -> 6 (ReLU) -> " << n_outputs << "\n\n";
 
-    torch::optim::Adam optimizer(net->parameters(), torch::optim::AdamOptions(1e-2).weight_decay(1e-3));
+    torch::optim::Adam optimizer(net->parameters(), torch::optim::AdamOptions(1e-2));
 
     // chi^2 loss on the observable, evaluated through the differentiable *Torch
     // chain. Shares `net` (optimizer updates propagate); scaling matches observ_calc*.
-    CustomLoss loss_fn(net, m_output_layer, m_X_min, m_X_max);
+    CustomLoss loss_fn(net, m_output_layer, m_X_min, m_X_max, m_xPow);
 
     // Early stopping parameters
     const int patience       = 200;
@@ -228,7 +230,7 @@ void CFF_NN_Fitter::predict() {
             Partons::getInstance()->getModuleObjectFactory()->newDVCSConvolCoeffFunctionModule(
                     DVCSCFFNNTorch::classId);
     static_cast<DVCSCFFNNTorch*>(pDVCSCFF)->setModel(
-            m_net, m_output_layer, m_X_min, m_X_max);
+            m_net, m_output_layer, m_X_min, m_X_max, m_xPow);
 
     DVCSXiConverterModule* pDVCSXiConverter =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
@@ -351,6 +353,7 @@ void CFF_NN_Fitter::export_model_json(const std::string& path) const {
     js << "  \"dtype\": \"float32\",\n";
     js << "  \"best_val_chi2\": " << m_best_val_loss << ",\n";
     js << "  \"input_features\": [\"xB\", \"t\", \"Q2\"],\n";
+    js << "  \"x_pow\": " << m_xPow << ",\n";
 
     js << "  \"output_layer\": [";
     for (size_t k = 0; k < m_output_layer.size(); ++k)
@@ -382,7 +385,7 @@ void CFF_NN_Fitter::observ_calc() {
             Partons::getInstance()->getModuleObjectFactory()->newDVCSConvolCoeffFunctionModule(
                     DVCSCFFNNTorch::classId);
     static_cast<DVCSCFFNNTorch*>(pDVCSCFF)->setModel(
-            m_net, m_output_layer, m_X_min, m_X_max);
+            m_net, m_output_layer, m_X_min, m_X_max, m_xPow);
 
     DVCSXiConverterModule* pDVCSXiConverter =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
@@ -437,7 +440,7 @@ void CFF_NN_Fitter::observ_calc_torch() {
             Partons::getInstance()->getModuleObjectFactory()->newDVCSConvolCoeffFunctionModule(
                     DVCSCFFNNTorch::classId);
     static_cast<DVCSCFFNNTorch*>(pDVCSCFF)->setModel(
-            m_net, m_output_layer, m_X_min, m_X_max);
+            m_net, m_output_layer, m_X_min, m_X_max, m_xPow);
 
     DVCSXiConverterModule* pDVCSXiConverter =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
@@ -504,7 +507,7 @@ void CFF_NN_Fitter::observ_calc_torch_scalar() {
             Partons::getInstance()->getModuleObjectFactory()->newDVCSConvolCoeffFunctionModule(
                     DVCSCFFNNTorch::classId);
     static_cast<DVCSCFFNNTorch*>(pDVCSCFF)->setModel(
-            m_net, m_output_layer, m_X_min, m_X_max);
+            m_net, m_output_layer, m_X_min, m_X_max, m_xPow);
 
     DVCSXiConverterModule* pDVCSXiConverter =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
