@@ -19,7 +19,8 @@ int main(int argc, char** argv) {
         CFF_NN_Fitter fitter(
             "/Users/marianav/Documents/Research/Analysis/GPD_studies/Data/Partons_input/BSA_CLAS_07_KK_format_ALU_error.csv",
             0.3f,
-            {"ImH"});// can be {"ReH", "ImH","ReE", "ImE","ReHt", "ImHt","ReEt", "ImEt"}
+            {"ImH"},// can be {"ReH", "ImH","ReE", "ImE","ReHt", "ImHt","ReEt", "ImEt"}
+            0.0);  // x_pow: CFF = xB^x_pow * NNet_output; NN learns xB*CFF (~ O(1) near small xB)
         fitter.train_nn();
         fitter.predict();
         fitter.observ_calc();

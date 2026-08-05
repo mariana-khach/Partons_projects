@@ -54,9 +54,12 @@ public:
      * @param outputLayer  CFF output-neuron names (e.g. {"ImH"}).
      * @param xMin,xMax    Optional per-feature min-max scaling for the NN inputs
      *                     (must match what observ_calc* use). Undefined = raw.
+     * @param xPow         Power applied to xB as CFF = xB^xPow * NNet_output
+     *                     (must match what observ_calc and predict() use).
      */
     CustomLossImpl(CFFNNModel net, const std::vector<std::string>& outputLayer,
-            const torch::Tensor& xMin = {}, const torch::Tensor& xMax = {});
+            const torch::Tensor& xMin = {}, const torch::Tensor& xMax = {},
+            double xPow = 0.0);
 
     /**
      * chi^2 over all rows. Each row builds a DVCSObservableKinematic from the full

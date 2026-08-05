@@ -9,6 +9,7 @@
 #include <partons/BaseObjectRegistry.h>
 #include <partons/modules/convol_coeff_function/ConvolCoeffFunctionModule.h>
 
+#include <cmath>
 #include <stdexcept>
 
 // ---------------------------------------------------------------------------
@@ -49,7 +50,8 @@ DVCSCFFNNTorch::DVCSCFFNNTorch(const DVCSCFFNNTorch& other)
           m_net(other.m_net),
           m_outputLayer(other.m_outputLayer),
           m_xMin(other.m_xMin),
-          m_xMax(other.m_xMax) {
+          m_xMax(other.m_xMax),
+          m_xPow(other.m_xPow) {
 }
 
 DVCSCFFNNTorch::~DVCSCFFNNTorch() {
@@ -94,11 +96,12 @@ void DVCSCFFNNTorch::isModuleWellConfigured() {
 
 void DVCSCFFNNTorch::setModel(CFFNNModel net,
         const std::vector<std::string>& outputLayer,
-        const torch::Tensor& xMin, const torch::Tensor& xMax) {
+        const torch::Tensor& xMin, const torch::Tensor& xMax, double xPow) {
     m_net         = net;
     m_outputLayer = outputLayer;
     m_xMin        = xMin;
     m_xMax        = xMax;
+    m_xPow        = xPow;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +144,10 @@ torch::Tensor DVCSCFFNNTorch::forwardNN() {
     m_net->eval();
     // Network runs in float32; promote to float64 so downstream BMJ12
     // arithmetic matches the scalar (double) pipeline.
-    return m_net->forward(input).to(torch::kFloat64);
+    torch::Tensor output = m_net->forward(input).to(torch::kFloat64);
+
+    // CFF = xB^m_xPow * NNet_output (m_xPow defaults to 0, i.e. no rescaling).
+    return output * std::pow(xB, m_xPow);
 }
 
 torch::Tensor DVCSCFFNNTorch::cffComponentTensor(const torch::Tensor& output,

@@ -32,7 +32,8 @@ public:
         const std::string& data_path,
         float test_fraction = 0.3f,
         const std::vector<std::string>& output_layer = {
-            "ImH", "ReH", "ImE", "ReE", "ImHt", "ReHt", "ImEt", "ReEt"});
+            "ImH", "ReH", "ImE", "ReE", "ImHt", "ReHt", "ImEt", "ReEt"},
+        double x_pow = 0.0);
 
     void train_nn();
     void predict();
@@ -44,6 +45,7 @@ private:
     std::string m_data_path;
     float m_test_fraction;
     std::vector<std::string> m_output_layer;
+    double m_xPow;  // CFF = xB^m_xPow * NNet_output (set once, shared by train/predict/eval)
     mutable CFFNNModel m_net{nullptr};
     torch::Tensor m_X_min, m_X_max;  // per-feature min/max from training set
     float m_best_val_loss = -1.f;    // val chi2 of the snapshot stored in m_net

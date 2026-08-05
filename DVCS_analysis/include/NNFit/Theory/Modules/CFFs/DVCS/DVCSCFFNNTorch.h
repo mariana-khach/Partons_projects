@@ -86,8 +86,9 @@ public:
     torch::Tensor computeCFFTensor(PARTONS::GPDType::Type type);
 
     /**
-     * Inject the trained libtorch model, the output layer name list, and the
-     * per-feature min-max scaling fitted on the training set.
+     * Inject the trained libtorch model, the output layer name list, the
+     * per-feature min-max scaling fitted on the training set, and the xB
+     * power-law prefactor.
      * Must be called before the module is used for computation.
      *
      * The scaling travels with the model: the network input [xB, t, Q2] is
@@ -95,13 +96,18 @@ public:
      * during training. If xMin/xMax are left undefined (default), computeCFF()
      * feeds raw features — use this only when the model was trained unscaled.
      *
+     * CFF = xB^xPow * NNet_output. xPow defaults to 0 (no rescaling, i.e.
+     * CFF = NNet_output, matching prior behavior).
+     *
      * @param net          Trained CFFNNModel.
      * @param outputLayer  Names of each output neuron, e.g. {"ImH", "ReH"}.
      * @param xMin         Per-feature minima, shape [3]. Undefined = no scaling.
      * @param xMax         Per-feature maxima, shape [3]. Undefined = no scaling.
+     * @param xPow         Power applied to xB as CFF = xB^xPow * NNet_output.
      */
     void setModel(CFFNNModel net, const std::vector<std::string>& outputLayer,
-            const torch::Tensor& xMin = {}, const torch::Tensor& xMax = {});
+            const torch::Tensor& xMin = {}, const torch::Tensor& xMax = {},
+            double xPow = 0.0);
 
 protected:
 
@@ -141,6 +147,7 @@ private:
     std::vector<std::string> m_outputLayer;    ///< Output neuron names.
     torch::Tensor            m_xMin;           ///< Per-feature minima [3] (training set).
     torch::Tensor            m_xMax;           ///< Per-feature maxima [3] (training set).
+    double                   m_xPow{0.0};      ///< CFF = xB^m_xPow * NNet_output.
 };
 
 #endif /* DVCS_CFF_NN_TORCH_H */

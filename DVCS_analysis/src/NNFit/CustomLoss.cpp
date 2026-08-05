@@ -27,7 +27,7 @@ const torch::TensorOptions kF64 = torch::TensorOptions().dtype(torch::kFloat64);
 
 CustomLossImpl::CustomLossImpl(CFFNNModel net,
         const std::vector<std::string>& outputLayer, const torch::Tensor& xMin,
-        const torch::Tensor& xMax) {
+        const torch::Tensor& xMax, double xPow) {
 
     using namespace PARTONS;
 
@@ -35,7 +35,7 @@ CustomLossImpl::CustomLossImpl(CFFNNModel net,
     DVCSConvolCoeffFunctionModule* pCFF =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSConvolCoeffFunctionModule(
                     DVCSCFFNNTorch::classId);
-    static_cast<DVCSCFFNNTorch*>(pCFF)->setModel(net, outputLayer, xMin, xMax);
+    static_cast<DVCSCFFNNTorch*>(pCFF)->setModel(net, outputLayer, xMin, xMax, xPow);
 
     DVCSXiConverterModule* pXi =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
