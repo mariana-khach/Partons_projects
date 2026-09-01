@@ -23,6 +23,7 @@
 #include <partons/ServiceObjectRegistry.h>
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -88,24 +89,40 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
     return {X, E, phi, y_obs, sigma};
 }
 
-void CFF_NN_Fitter::train_nn() {
+CFF_NN_Fitter::FitOutcome CFF_NN_Fitter::fit_once(const torch::Tensor& X,
+        const torch::Tensor& E, const torch::Tensor& phi,
+        const torch::Tensor& y_obs, const torch::Tensor& sigma, bool smear,
+        const std::string& learning_curve_path, float hopeless_val_loss,
+        int hopeless_check_epoch, unsigned seed, bool normalize_loss) const {
 
-    auto [X, E, phi, y_obs, sigma] = load_data_observable();
+    // Fixes both the torch RNG (weight init below + the smear draw right
+    // here) and the train/val shuffle RNG (below) from a single seed, so a
+    // repeated call with the same seed reproduces byte-identical starting
+    // conditions — used for controlled A/B comparisons (see train_replicas()).
+    torch::manual_seed(seed);
+
+    // Smeared pseudodata (Gepard's datasets_replica_vectloss formula):
+    // y_smeared = y_obs + N(0, sigma), sigma itself stays unsmeared (still
+    // the chi^2 weight). Central fit (smear=false) trains on raw y_obs.
+    torch::Tensor y_used = smear ? y_obs + torch::randn_like(y_obs) * sigma : y_obs;
 
     int n       = static_cast<int>(X.size(0));
     int n_val   = static_cast<int>(n * m_test_fraction);
     int n_train = n - n_val;
 
     std::cout << "Loaded " << n << " samples | train: " << n_train
-              << " | val: " << n_val << "\n";
+              << " | val: " << n_val << (smear ? " (smeared)" : " (central)") << "\n";
     std::cout << "Output layer (" << m_output_layer.size() << "): ";
     for (const auto& s : m_output_layer) std::cout << s << " ";
-    std::cout << "\nTraining directly on observable data (chi^2 loss)\n\n";
+    std::cout << "\nTraining directly on observable data ("
+              << (normalize_loss ? "reduced chi^2 = chi^2/n loss" : "raw chi^2 sum loss") << ")\n\n";
 
-    // Shuffle indices
+    // Fresh shuffle every call — independent train/val split per attempt
+    // (deterministic given seed; see fit_once()'s doc comment).
     std::vector<int> idx(n);
     std::iota(idx.begin(), idx.end(), 0);
-    std::shuffle(idx.begin(), idx.end(), std::mt19937{std::random_device{}()});
+    std::mt19937 rng(seed);
+    std::shuffle(idx.begin(), idx.end(), rng);
 
     auto idx_train = torch::tensor(std::vector<int>(idx.begin(), idx.begin() + n_train));
     auto idx_val   = torch::tensor(std::vector<int>(idx.begin() + n_train, idx.end()));
@@ -116,17 +133,17 @@ void CFF_NN_Fitter::train_nn() {
     torch::Tensor X_train   = split(X, idx_train),     X_val   = split(X, idx_val);
     torch::Tensor E_train   = split(E, idx_train),     E_val   = split(E, idx_val);
     torch::Tensor phi_train = split(phi, idx_train),   phi_val = split(phi, idx_val);
-    torch::Tensor y_train   = split(y_obs, idx_train), y_val   = split(y_obs, idx_val);
+    torch::Tensor y_train   = split(y_used, idx_train), y_val  = split(y_used, idx_val);
     torch::Tensor s_train   = split(sigma, idx_train), s_val   = split(sigma, idx_val);
 
-    // Per-feature min-max from the training kinematics. Applied INSIDE the NN
-    // module (passed to CustomLoss -> setModel below); X stays RAW here because
-    // the observable chain builds its kinematics from raw (xB, t, Q2) and the
-    // module scales internally — matching observ_calc*.
-    m_X_min = std::get<0>(X_train.min(0));
-    m_X_max = std::get<0>(X_train.max(0));
+    // Per-feature min-max from THIS attempt's own training kinematics. Applied
+    // INSIDE the NN module (passed to CustomLoss -> setModel below); X stays
+    // RAW here because the observable chain builds its kinematics from raw
+    // (xB, t, Q2) and the module scales internally — matching observ_calc*.
+    torch::Tensor X_min = std::get<0>(X_train.min(0));
+    torch::Tensor X_max = std::get<0>(X_train.max(0));
 
-    // Build model
+    // Fresh weights + fresh optimizer every call.
     int n_outputs = static_cast<int>(m_output_layer.size());
     CFFNNModel net(n_outputs);
     std::cout << "Model: 3 -> 6 (ReLU) -> " << n_outputs << "\n\n";
@@ -135,17 +152,19 @@ void CFF_NN_Fitter::train_nn() {
 
     // chi^2 loss on the observable, evaluated through the differentiable *Torch
     // chain. Shares `net` (optimizer updates propagate); scaling matches observ_calc*.
-    CustomLoss loss_fn(net, m_output_layer, m_X_min, m_X_max, m_xPow);
+    CustomLoss loss_fn(net, m_output_layer, X_min, X_max, m_xPow, normalize_loss);
 
     // Early stopping parameters
-    const int patience       = 200;
+    const int patience       = 1000;
     const int max_epochs     = 10000;
     float     best_val_loss  = std::numeric_limits<float>::max();
     int       patience_count = 0;
+    bool      hopeless       = false;
+    bool      stopped_early  = false;
 
     // Snapshot of the parameters at the best validation loss, restored into the
-    // net at the end of training — so the stored model is the one early stopping
-    // selected, not the last epoch (which is up to `patience` steps past it).
+    // net at the end — so the returned model is the one early stopping (or a
+    // hopeless abort) selected, not the last epoch's weights.
     std::vector<torch::Tensor> best_params;
     auto snapshot_params = [&]() {
         best_params.clear();
@@ -153,23 +172,25 @@ void CFF_NN_Fitter::train_nn() {
             best_params.push_back(p.detach().clone());
     };
     auto restore_best = [&]() {
+        if (best_params.empty()) return;  // no improving epoch yet: keep fresh init weights
         torch::NoGradGuard no_grad;
         std::vector<torch::Tensor> params = net->parameters();
         for (size_t i = 0; i < best_params.size(); ++i)
             params[i].copy_(best_params[i]);
-        m_best_val_loss = best_val_loss;
     };
 
-    const std::string out_dir = "/Users/marianav/Documents/Research/Analysis/GPD_studies/git/Partons/DVCS_analysis/My_Analysis/Partons_output";
-
-    std::ofstream csv(out_dir + "/cff_learning_curve.csv", std::ios::trunc);
-    if (!csv)
-        throw std::runtime_error("Cannot open cff_learning_curve.csv for writing in: " + out_dir);
-    csv << "epoch,train_loss,val_loss\n";
+    const bool write_curve = !learning_curve_path.empty();
+    std::ofstream csv;
+    if (write_curve) {
+        csv.open(learning_curve_path, std::ios::trunc);
+        if (!csv)
+            throw std::runtime_error("Cannot open learning curve file for writing: " + learning_curve_path);
+        csv << "epoch,train_loss,val_loss\n";  // both columns are now reduced chi^2 (chi^2/n)
+    }
 
     for (int epoch = 1; epoch <= max_epochs; ++epoch) {
 
-        // Training step — chi^2 on the observable
+        // Training step — reduced chi^2 (chi^2/n) on the observable
         net->train();
         optimizer.zero_grad();
         torch::Tensor loss_train =
@@ -184,13 +205,29 @@ void CFF_NN_Fitter::train_nn() {
             val_loss = loss_fn(X_val, E_val, phi_val, y_val, s_val).item<float>();
         }
 
+        // Hopeless checks: divergence, or still bad at the checkpoint epoch.
+        // Caller (train_replicas) redraws everything on a hopeless attempt.
+        if (!std::isfinite(val_loss)) {
+            std::cout << "\nAborting: val chi2/n is NaN/Inf at epoch " << epoch << "\n";
+            hopeless = true;
+            break;
+        }
+        if (hopeless_check_epoch > 0 && epoch % hopeless_check_epoch == 0
+                && val_loss > hopeless_val_loss) {
+            std::cout << "\nAborting: val chi2/n " << val_loss << " still above "
+                      << hopeless_val_loss << " at epoch " << epoch << "\n";
+            hopeless = true;
+            break;
+        }
+
         if (epoch % 2 == 0) {
             std::cout << "Epoch " << std::setw(6) << epoch
-                      << " | Train loss: " << std::setw(12) << loss_train.item<float>()
-                      << " | Val loss: "   << std::setw(12) << val_loss << "\n";
-
-            csv << epoch << "," << loss_train.item<float>() << "," << val_loss << "\n";
-            csv.flush();  // keep the learning curve live-tailable without reopening the file
+                      << " | Train chi2/n: " << std::setw(12) << loss_train.item<float>()
+                      << " | Val chi2/n: "   << std::setw(12) << val_loss << "\n";
+            if (write_curve) {
+                csv << epoch << "," << loss_train.item<float>() << "," << val_loss << "\n";
+                csv.flush();  // keep the learning curve live-tailable without reopening the file
+            }
         }
 
         // Early stopping check
@@ -202,17 +239,81 @@ void CFF_NN_Fitter::train_nn() {
             ++patience_count;
             if (patience_count >= patience) {
                 std::cout << "\nEarly stopping at epoch " << epoch
-                          << " | Best val loss: " << best_val_loss << "\n";
-                restore_best();
-                m_net = net;
-                return;
+                          << " | Best val chi2/n: " << best_val_loss << "\n";
+                stopped_early = true;
+                break;
             }
         }
     }
 
-    std::cout << "\nTraining complete | Best val loss: " << best_val_loss << "\n";
+    if (!hopeless && !stopped_early)
+        std::cout << "\nTraining complete | Best val chi2/n: " << best_val_loss << "\n";
     restore_best();
-    m_net = net;
+
+    return FitOutcome{TrainedModel{net, X_min, X_max, best_val_loss}, hopeless};
+}
+
+void CFF_NN_Fitter::train_nn() {
+
+    auto [X, E, phi, y_obs, sigma] = load_data_observable();
+
+    const std::string out_dir = "/Users/marianav/Documents/Research/Analysis/GPD_studies/git/Partons/DVCS_analysis/My_Analysis/Partons_output";
+
+    // Central (unsmeared) fit — no hopeless-abort/retry (hopeless_check_epoch=0
+    // disables the periodic threshold check; matches this method's original
+    // always-run-to-completion-or-early-stop behavior).
+    FitOutcome outcome = fit_once(X, E, phi, y_obs, sigma, /*smear=*/false,
+            out_dir + "/cff_learning_curve.csv",
+            /*hopeless_val_loss=*/std::numeric_limits<float>::max(),
+            /*hopeless_check_epoch=*/0, /*seed=*/std::random_device{}());
+
+    m_net            = outcome.model.net;
+    m_X_min          = outcome.model.X_min;
+    m_X_max          = outcome.model.X_max;
+    m_best_val_loss  = outcome.model.best_val_loss;
+}
+
+void CFF_NN_Fitter::train_replicas(int n_replicas, int max_retries_per_replica,
+        float hopeless_val_loss, int hopeless_check_epoch,
+        unsigned base_seed, bool normalize_loss) {
+
+    auto [X, E, phi, y_obs, sigma] = load_data_observable();
+
+    m_replicas.clear();
+    m_replicas.reserve(n_replicas);
+
+    for (int r = 0; r < n_replicas; ++r) {
+
+        std::cout << "\n=== Replica " << r << " ===\n";
+
+        FitOutcome outcome{TrainedModel{}, true};
+        int attempt = 0;
+        for (; attempt < max_retries_per_replica; ++attempt) {
+            unsigned seed = (base_seed == 0)
+                    ? std::random_device{}()
+                    : base_seed + static_cast<unsigned>(r) * 100u
+                            + static_cast<unsigned>(attempt);
+            outcome = fit_once(X, E, phi, y_obs, sigma, /*smear=*/true,
+                    /*learning_curve_path=*/"", hopeless_val_loss, hopeless_check_epoch,
+                    seed, normalize_loss);
+            if (!outcome.hopeless) break;
+            std::cout << "Replica " << r << " attempt " << attempt
+                      << " was hopeless, redrawing (fresh smear + split + weights)...\n";
+        }
+
+        if (outcome.hopeless) {
+            std::cout << "WARNING: replica " << r << " still hopeless after "
+                      << max_retries_per_replica
+                      << " attempts; keeping the last attempt anyway.\n";
+        } else {
+            std::cout << "Replica " << r << " accepted | best val loss: "
+                      << outcome.model.best_val_loss << " (attempt " << attempt << ")\n";
+        }
+
+        m_replicas.push_back(outcome.model);
+    }
+
+    std::cout << "\nTrained " << m_replicas.size() << " replicas.\n";
 }
 
 void CFF_NN_Fitter::predict() {
@@ -289,13 +390,15 @@ void CFF_NN_Fitter::predict() {
     }
     std::cout << "Predictions written to obs_prediction.csv (" << n << " rows)\n";
 
-    // Goodness of fit on the observable: MSE, R^2, and chi^2 (sigma-weighted).
+    // Goodness of fit on the observable: MSE, R^2, and reduced chi^2 = chi^2/n
+    // (sigma-weighted; n = number of points, matching CustomLoss's convention
+    // and best_val_chi2 in cff_model.json — both are chi^2 divided by point count).
     float mse    = (y_pred - y_true).pow(2).mean().item<float>();
     float y_mean = y_true.mean().item<float>();
     float ss_res = (y_pred - y_true).pow(2).sum().item<float>();
     float ss_tot = (y_true - y_mean).pow(2).sum().item<float>();
     float r2     = (ss_tot > 0.f) ? 1.f - ss_res / ss_tot : 0.f;
-    float chi2   = ((y_pred - y_true) / sig).pow(2).sum().item<float>();
+    float chi2   = ((y_pred - y_true) / sig).pow(2).mean().item<float>();
 
     std::ofstream eval(out_dir + "/obs_model_eval.csv", std::ios::trunc);
     if (!eval)
@@ -304,7 +407,7 @@ void CFF_NN_Fitter::predict() {
     eval << pDVCSObs->getClassName() << "," << mse << "," << r2 << "," << chi2 << "\n";
 
     std::cout << pDVCSObs->getClassName() << " | MSE: " << mse
-              << " | R²: " << r2 << " | chi2: " << chi2 << "\n";
+              << " | R²: " << r2 << " | chi2/n: " << chi2 << "\n";
     std::cout << "Model evaluation written to obs_model_eval.csv\n";
 
     // Persist the trained model (weights + scaling + labels) for out-of-process
@@ -313,19 +416,24 @@ void CFF_NN_Fitter::predict() {
 }
 
 void CFF_NN_Fitter::export_model_json(const std::string& path) const {
-
     if (!m_net)
         throw std::runtime_error("Model has not been trained. Call train_nn() first.");
+    export_model_json(path, m_net, m_X_min, m_X_max, m_best_val_loss);
+}
+
+void CFF_NN_Fitter::export_model_json(const std::string& path,
+        const CFFNNModel& net, const torch::Tensor& xMin,
+        const torch::Tensor& xMax, float bestValLoss) const {
 
     // PyTorch nn::Linear stores weight as [out, in] and computes y = x W^T + b.
-    const torch::Tensor W1 = m_net->fc1->weight;   // [hidden, in]  = [6, 3]
-    const torch::Tensor b1 = m_net->fc1->bias;     // [hidden]      = [6]
-    const torch::Tensor W2 = m_net->fc2->weight;   // [out, hidden] = [n, 6]
-    const torch::Tensor b2 = m_net->fc2->bias;     // [out]         = [n]
+    const torch::Tensor W1 = net->fc1->weight;   // [hidden, in]  = [6, 3]
+    const torch::Tensor b1 = net->fc1->bias;     // [hidden]      = [6]
+    const torch::Tensor W2 = net->fc2->weight;   // [out, hidden] = [n, 6]
+    const torch::Tensor b2 = net->fc2->bias;     // [out]         = [n]
 
     std::ofstream js(path, std::ios::trunc);
     if (!js)
-        throw std::runtime_error("Cannot open cff_model.json for writing: " + path);
+        throw std::runtime_error("Cannot open model JSON for writing: " + path);
     js << std::setprecision(9);  // enough to round-trip float32
 
     auto vec = [&](const torch::Tensor& v) {
@@ -351,7 +459,7 @@ void CFF_NN_Fitter::export_model_json(const std::string& path) const {
     js << "  \"arch\": {\"in\": " << W1.size(1) << ", \"hidden\": " << W1.size(0)
        << ", \"out\": " << W2.size(0) << ", \"activation\": \"tanh\"},\n";
     js << "  \"dtype\": \"float32\",\n";
-    js << "  \"best_val_chi2\": " << m_best_val_loss << ",\n";
+    js << "  \"best_val_chi2\": " << bestValLoss << ",\n";
     js << "  \"input_features\": [\"xB\", \"t\", \"Q2\"],\n";
     js << "  \"x_pow\": " << m_xPow << ",\n";
 
@@ -361,16 +469,30 @@ void CFF_NN_Fitter::export_model_json(const std::string& path) const {
     js << "],\n";
 
     js << "  \"scaling\": {\n    \"x_min\": ";
-    if (m_X_min.defined()) vec(m_X_min); else js << "null";
+    if (xMin.defined()) vec(xMin); else js << "null";
     js << ",\n    \"x_max\": ";
-    if (m_X_max.defined()) vec(m_X_max); else js << "null";
+    if (xMax.defined()) vec(xMax); else js << "null";
     js << "\n  },\n";
 
     js << "  \"fc1\": {\"weight\": "; mat(W1); js << ", \"bias\": "; vec(b1); js << "},\n";
     js << "  \"fc2\": {\"weight\": "; mat(W2); js << ", \"bias\": "; vec(b2); js << "}\n";
     js << "}\n";
 
-    std::cout << "Model exported to cff_model.json\n";
+    std::cout << "Model exported to " << path << "\n";
+}
+
+void CFF_NN_Fitter::export_replicas(const std::string& out_dir,
+        const std::string& name_prefix) const {
+
+    for (size_t r = 0; r < m_replicas.size(); ++r) {
+        std::ostringstream name;
+        name << out_dir << "/" << name_prefix << std::setw(2)
+             << std::setfill('0') << r << ".json";
+        const TrainedModel& m = m_replicas[r];
+        export_model_json(name.str(), m.net, m.X_min, m.X_max, m.best_val_loss);
+    }
+
+    std::cout << "Exported " << m_replicas.size() << " replica models to " << out_dir << "\n";
 }
 
 void CFF_NN_Fitter::observ_calc() {

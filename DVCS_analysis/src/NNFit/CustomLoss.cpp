@@ -27,7 +27,8 @@ const torch::TensorOptions kF64 = torch::TensorOptions().dtype(torch::kFloat64);
 
 CustomLossImpl::CustomLossImpl(CFFNNModel net,
         const std::vector<std::string>& outputLayer, const torch::Tensor& xMin,
-        const torch::Tensor& xMax, double xPow) {
+        const torch::Tensor& xMax, double xPow, bool normalize)
+        : m_normalize(normalize) {
 
     using namespace PARTONS;
 
@@ -102,5 +103,5 @@ torch::Tensor CustomLossImpl::forward(const torch::Tensor& X,
         chi2 = chi2 + resid * resid;
     }
 
-    return chi2;
+    return m_normalize ? chi2 / n : chi2;
 }
