@@ -6,10 +6,13 @@
 #include <ElementaryUtils/logger/LoggerManager.h>
 #include <partons/Partons.h>
 #include "../include/NNFit/CFF_NN_Fit.h"
+#include <chrono>
+#include <iostream>
 
 int main(int argc, char** argv) {
 
     PARTONS::Partons* pPartons = 0;
+    const auto start_time = std::chrono::steady_clock::now();
 
     try {
 
@@ -27,6 +30,12 @@ int main(int argc, char** argv) {
         fitter.observ_calc_torch();
         fitter.observ_calc_torch_scalar();
 
+        // Monte Carlo replica ensemble (smeared pseudodata) for a CFF
+        // uncertainty band, alongside the central fit above.
+        fitter.train_replicas(10);
+        fitter.export_replicas(
+            "/Users/marianav/Documents/Research/Analysis/GPD_studies/git/Partons/DVCS_analysis/My_Analysis/Partons_output");
+
     } catch (const ElemUtils::CustomException &e) {
         pPartons->getLoggerManager()->error(e);
         if (pPartons) pPartons->close();
@@ -36,6 +45,10 @@ int main(int argc, char** argv) {
     }
 
     if (pPartons) pPartons->close();
+
+    const auto end_time = std::chrono::steady_clock::now();
+    const double elapsed_s = std::chrono::duration<double>(end_time - start_time).count();
+    std::cout << "Total run time: " << elapsed_s << " s\n";
 
     return 0;
 }

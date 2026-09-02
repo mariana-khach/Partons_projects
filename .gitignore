@@ -5,6 +5,7 @@
 *.exe
 *.csv
 *.png
+*.json
 **/.ipynb_checkpoints/
 
 # ROOT files

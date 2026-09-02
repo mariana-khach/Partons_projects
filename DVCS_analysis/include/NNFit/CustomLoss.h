@@ -18,10 +18,17 @@ class DVCSObservableServiceTorch; // fwd decl (held only as a pointer)
 /**
  * @class CustomLossImpl
  *
- * @brief chi^2 loss on a DVCS observable, trained directly on data.
+ * @brief Reduced chi^2 loss on a DVCS observable, trained directly on data.
  *
- * Formula:
- *   chi^2 = sum_{i=1}^{n} ( O(NN(x_i)) - y_i )^2 / sigma_i^2
+ * Formula (normalize=true, the default):
+ *   chi^2/n = (1/n) sum_{i=1}^{n} ( O(NN(x_i)) - y_i )^2 / sigma_i^2
+ *
+ * Normalized by n (matches Gepard's CustomLoss/CustomLoss_vectloss, which use
+ * torch.mean rather than a raw sum) so the loss is comparable across splits of
+ * different size (train vs val) and reads as a standard reduced-chi^2
+ * diagnostic (~1 = good fit). normalize=false reverts to the raw sum (the
+ * original, pre-normalization loss) — kept only for controlled A/B comparisons
+ * against the reduced-chi^2 default, not for normal training.
  *
  * where O is the observable evaluated through the differentiable PARTONS-tensor
  * module chain (DVCSCFFNNTorch -> DVCSProcessBMJ12Torch -> the wired observable),
@@ -56,10 +63,13 @@ public:
      *                     (must match what observ_calc* use). Undefined = raw.
      * @param xPow         Power applied to xB as CFF = xB^xPow * NNet_output
      *                     (must match what observ_calc and predict() use).
+     * @param normalize    true (default): return chi^2/n. false: return the
+     *                     raw chi^2 sum (pre-normalization behavior) — only
+     *                     for controlled A/B comparisons.
      */
     CustomLossImpl(CFFNNModel net, const std::vector<std::string>& outputLayer,
             const torch::Tensor& xMin = {}, const torch::Tensor& xMax = {},
-            double xPow = 0.0);
+            double xPow = 0.0, bool normalize = true);
 
     /**
      * chi^2 over all rows. Each row builds a DVCSObservableKinematic from the full
@@ -82,6 +92,7 @@ private:
 
     DVCSObservableServiceTorch* m_pServiceTorch = nullptr; ///< Torch-aware service.
     DVCSObservableTorch*        m_pObsTorch     = nullptr; ///< Wired tensor observable.
+    bool m_normalize = true; ///< true: return chi^2/n. false: raw chi^2 sum.
 };
 
 TORCH_MODULE(CustomLoss);
