@@ -68,6 +68,41 @@ protected:
     torch::Tensor aLUTensor(const PARTONS::DVCSObservableKinematic& kinematic,
             const torch::Tensor& phi);
 
+    /**
+     * Batched (N-point) sibling of aLUTensor(): reusable pointwise asymmetry
+     * A_LU(phi), batched over N data points x M phi nodes. Mirrors aLUTensor()
+     * exactly -- prepare once (hoisting the helicity-independent setup),
+     * assemble per helicity -- driven through the same abstract
+     * DVCSProcessModuleTorch* base (prepareTensorBatch()/
+     * crossSectionTensorBatch()), no concrete process-module type needed.
+     * @return [N,M] tensor A_LU(phi), grad-connected to the NN CFF parameters.
+     */
+    torch::Tensor aLUTensorBatch(const torch::Tensor& xB, const torch::Tensor& t,
+            const torch::Tensor& Q2, const torch::Tensor& E,
+            const torch::Tensor& phi);
+
+    /**
+     * Batched (N-point) sibling of computeTensorImpl() -- the
+     * ObservableTorch<K> hook (channel-generic List<K>).
+     *
+     * NOT IMPLEMENTED at this pointwise base -- throws. A meaningful batched
+     * pointwise A_LU would need each of the N kinematics' own phi matched
+     * 1:1 (an [N] phi broadcast), whereas aLUTensorBatch()/
+     * crossSectionTensorBatch() broadcast phi as a [M] axis shared by every
+     * data point (an [N,M] outer product) -- built for the Fourier-moment
+     * leaf (DVCSAluMinusSin1PhiTorch), which integrates every point over the
+     * same quadrature nodes. Reusing it here would need either a new
+     * per-point-phi broadcasting mode or a wasteful O(N^2) diagonal
+     * extraction; skipped since no current consumer needs a batched
+     * pointwise leaf. DVCSAluMinusSin1PhiTorch overrides this with a real,
+     * O(N) implementation reusing aLUTensorBatch() as it was built for.
+     * Kept as a concrete (non-pure) override only so this class -- which
+     * self-registers its own prototype -- remains instantiable.
+     */
+    torch::Tensor computeTensorImplBatch(
+            const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics)
+            override;
+
     /** Scalar wrapper over computeTensor() (detached) for the scalar pipeline. */
     virtual PARTONS::PhysicalType<double> computeObservable(
             const PARTONS::DVCSObservableKinematic& kinematic,

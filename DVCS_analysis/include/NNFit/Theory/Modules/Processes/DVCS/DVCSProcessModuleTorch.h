@@ -143,6 +143,81 @@ public:
     virtual torch::Tensor crossSectionInterfTensor(double beamHelicity,
             double beamCharge, const torch::Tensor& phi) = 0;
 
+    // -----------------------------------------------------------------------
+    // Batched (N-point) siblings -- mirror the single-point prepare/assemble
+    // split above exactly, with xB/t/Q2/E as raw [N] tensors instead of a
+    // single DVCSObservableKinematic (Option B design: no bean packing).
+    // -----------------------------------------------------------------------
+
+    /**
+     * Prepare the phi-independent quantities once for N kinematic points at
+     * once (BMJ12 derived quantities, angular coefficients, and one batched
+     * NN forward for the CFFs). Batched sibling of prepareTensor().
+     */
+    void prepareTensorBatch(const torch::Tensor& xB, const torch::Tensor& t,
+            const torch::Tensor& Q2, const torch::Tensor& E) {
+        setupKinematicsTorchBatch(xB, t, Q2, E);
+        m_preparedBatch = true;
+    }
+
+    /**
+     * Total unpolarized-target DVCS cross section sigma(lambda, phi), batched
+     * over N data points x M phi nodes -- lightweight, assumes
+     * prepareTensorBatch() already cached the phi-independent setup.
+     */
+    torch::Tensor crossSectionTensorBatch(double beamHelicity, double beamCharge,
+            const torch::Tensor& phi) {
+        return crossSectionTensorBatch(beamHelicity, beamCharge, phi,
+                PARTONS::VCSSubProcessType::ALL);
+    }
+
+    /** Lightweight selectable batched assemble (assumes prepareTensorBatch() ran). */
+    torch::Tensor crossSectionTensorBatch(double beamHelicity, double beamCharge,
+            const torch::Tensor& phi, PARTONS::VCSSubProcessType::Type processType) {
+
+        if (!m_preparedBatch) {
+            throw ElemUtils::CustomException("DVCSProcessModuleTorch", __func__,
+                    "crossSectionTensorBatch() called before "
+                    "prepareTensorBatch(); no phi-independent setup is cached.");
+        }
+
+        torch::Tensor sigma;
+        bool any = false;
+
+        if (processType == PARTONS::VCSSubProcessType::ALL
+                || processType == PARTONS::VCSSubProcessType::DVCS) {
+            torch::Tensor v = crossSectionVCSTensorBatch(beamHelicity, beamCharge, phi);
+            sigma = any ? sigma + v : v;
+            any = true;
+        }
+        if (processType == PARTONS::VCSSubProcessType::ALL
+                || processType == PARTONS::VCSSubProcessType::BH) {
+            torch::Tensor v = crossSectionBHTensorBatch(beamHelicity, beamCharge, phi);
+            sigma = any ? sigma + v : v;
+            any = true;
+        }
+        if (processType == PARTONS::VCSSubProcessType::ALL
+                || processType == PARTONS::VCSSubProcessType::INT) {
+            torch::Tensor v = crossSectionInterfTensorBatch(beamHelicity, beamCharge, phi);
+            sigma = any ? sigma + v : v;
+            any = true;
+        }
+
+        return sigma;
+    }
+
+    /** Batched Bethe-Heitler sub-process sigma_BH(phi), [N,M]. */
+    virtual torch::Tensor crossSectionBHTensorBatch(double beamHelicity,
+            double beamCharge, const torch::Tensor& phi) = 0;
+
+    /** Batched pure-DVCS (VCS) sub-process sigma_VCS(phi), [N,M]. */
+    virtual torch::Tensor crossSectionVCSTensorBatch(double beamHelicity,
+            double beamCharge, const torch::Tensor& phi) = 0;
+
+    /** Batched interference sub-process sigma_I(phi), [N,M]. */
+    virtual torch::Tensor crossSectionInterfTensorBatch(double beamHelicity,
+            double beamCharge, const torch::Tensor& phi) = 0;
+
 protected:
 
     /**
@@ -154,8 +229,21 @@ protected:
     virtual void setupKinematicsTorch(
             const PARTONS::DVCSObservableKinematic& kinematic) = 0;
 
+    /**
+     * Batched (N-point) sibling of setupKinematicsTorch(): the BMJ12 derived
+     * quantities and angular coefficients re-expressed as [N]-tensor
+     * arithmetic, plus one batched NN forward for the CFFs. Called once via
+     * prepareTensorBatch() before the batched sub-process atoms.
+     */
+    virtual void setupKinematicsTorchBatch(const torch::Tensor& xB,
+            const torch::Tensor& t, const torch::Tensor& Q2,
+            const torch::Tensor& E) = 0;
+
     /// Set by prepareTensor(); gates the lightweight assemble overloads.
     bool m_prepared = false;
+
+    /// Set by prepareTensorBatch(); gates the lightweight batched assemble overloads.
+    bool m_preparedBatch = false;
 };
 
 #endif /* DVCS_PROCESS_MODULE_TORCH_H */

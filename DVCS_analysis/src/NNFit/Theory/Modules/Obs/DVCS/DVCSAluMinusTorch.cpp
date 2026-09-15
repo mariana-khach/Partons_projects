@@ -60,6 +60,34 @@ torch::Tensor DVCSAluMinusTorch::aLUTensor(
     return (sigmaPlus - sigmaMinus) / (sigmaPlus + sigmaMinus);
 }
 
+torch::Tensor DVCSAluMinusTorch::aLUTensorBatch(const torch::Tensor& xB,
+        const torch::Tensor& t, const torch::Tensor& Q2,
+        const torch::Tensor& E, const torch::Tensor& phi) {
+
+    DVCSProcessModuleTorch* pProc = torchProcessModule();
+
+    // Same hoist as aLUTensor(): prepare once (N-point kinematics + one
+    // batched NN forward), then assemble sigma for each beam helicity from
+    // the cached state.
+    pProc->prepareTensorBatch(xB, t, Q2, E);
+    torch::Tensor sigmaPlus = pProc->crossSectionTensorBatch(+1., -1., phi);
+    torch::Tensor sigmaMinus = pProc->crossSectionTensorBatch(-1., -1., phi);
+
+    return (sigmaPlus - sigmaMinus) / (sigmaPlus + sigmaMinus); // [N,M]
+}
+
+torch::Tensor DVCSAluMinusTorch::computeTensorImplBatch(
+        const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics) {
+    // See the header doc comment: a correct O(N) implementation needs a
+    // per-point-own-phi broadcasting mode aLUTensorBatch() doesn't have
+    // (it was built for the shared-quadrature-node Fourier-moment case).
+    // Not needed by any current consumer -- DVCSAluMinusSin1PhiTorch
+    // overrides this with the real implementation.
+    throw ElemUtils::CustomException(getClassName(), __func__,
+            "Batched pointwise A_LU is not implemented at this base class; "
+            "use a Fourier-moment leaf (e.g. DVCSAluMinusSin1PhiTorch).");
+}
+
 torch::Tensor DVCSAluMinusTorch::computeTensorImpl(
         const PARTONS::DVCSObservableKinematic& kinematic) {
 

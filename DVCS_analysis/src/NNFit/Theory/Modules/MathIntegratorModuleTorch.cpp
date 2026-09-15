@@ -218,6 +218,61 @@ torch::Tensor MathIntegratorModuleTorch::integrateTorchQuadrature(
     return (m_quadWeights.to(fvals.options()) * fvals).sum() * c;
 }
 
+// Batched (N-point) sibling of integrateTorchQuadrature(): identical remap and
+// cached nodes/weights; the only difference is the integrand returns [N,M]
+// (one row per data point) instead of [M], and the reduction sums over the M
+// axis only (dim=1), keeping N intact.
+torch::Tensor MathIntegratorModuleTorch::integrateTorchBatch(
+        const std::function<torch::Tensor(const torch::Tensor&)>& pFunction,
+        double a, double b) const {
+
+    if (!m_mathIntegrator) {
+        throw std::runtime_error(
+                "MathIntegratorModuleTorch::integrateTorchBatch: no integrator "
+                "set; call setIntegrator() first.");
+    }
+    if (m_integratorType != NumA::IntegratorType1D::TRAPEZOIDAL
+            && m_integratorType != NumA::IntegratorType1D::GL) {
+        throw std::runtime_error(
+                "MathIntegratorModuleTorch::integrateTorchBatch: only fixed-rule "
+                "quadratures (GL, TRAPEZOIDAL) are supported for batched "
+                "integration -- DEXP's adaptive per-point refinement can't be "
+                "expressed as a single [N,M] grid.");
+    }
+
+    NumA::QuadratureIntegrator1D* quad =
+            dynamic_cast<NumA::QuadratureIntegrator1D*>(m_mathIntegrator);
+    if (!quad) {
+        throw std::runtime_error(
+                "MathIntegratorModuleTorch::integrateTorchBatch: integrator is "
+                "not a fixed-rule quadrature.");
+    }
+
+    const std::vector<double>& refNodes = quad->getNodes();
+    const std::vector<double>& refWeights = quad->getWeights();
+    if (refNodes.empty() || refWeights.size() != refNodes.size()) {
+        throw std::runtime_error(
+                "MathIntegratorModuleTorch::integrateTorchBatch: empty or "
+                "inconsistent nodes/weights; set the number of nodes first.");
+    }
+
+    // Same cache as integrateTorchQuadrature() -- one set of reference
+    // nodes/weights serves both the single-point and batched paths.
+    if (!m_quadNodes.defined()
+            || m_quadNodes.size(0) != static_cast<int64_t>(refNodes.size())) {
+        m_quadNodes = torch::tensor(refNodes, kF64);
+        m_quadWeights = torch::tensor(refWeights, kF64);
+    }
+
+    const double c = 0.5 * (b - a);
+    const double d = 0.5 * (a + b);
+
+    torch::Tensor x = d + c * m_quadNodes; // [M]
+
+    torch::Tensor fvals = pFunction(x); // [N,M]
+    return (m_quadWeights.to(fvals.options()) * fvals).sum(1) * c; // [N]
+}
+
 // Log-spaced trapezoid: matches NumA::TrapezoidalLogIntegrator1D::integrate().
 // Points are x_i = exp(logA + i*logStep); the (non-uniform) trapezoid rule is a
 // fixed weighted sum sum_i w_i f(x_i) with w_0, w_{N-1} half-steps and interior

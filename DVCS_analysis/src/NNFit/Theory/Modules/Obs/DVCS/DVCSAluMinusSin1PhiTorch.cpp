@@ -36,12 +36,41 @@ DVCSAluMinusSin1PhiTorch* DVCSAluMinusSin1PhiTorch::clone() const {
 torch::Tensor DVCSAluMinusSin1PhiTorch::computeTensorImpl(
         const PARTONS::DVCSObservableKinematic& kinematic) {
 
-    // A_LU(phi) * sin(phi), batched over the quadrature nodes. aLUTensor() is the
-    // reusable pointwise asymmetry inherited from DVCSAluMinusTorch.
-    auto integrand = [this, &kinematic](const torch::Tensor& phi) -> torch::Tensor {
-        return aLUTensor(kinematic, phi) * torch::sin(phi);
+    // Thin N=1 wrapper around computeTensorImplBatch(): wrap the single
+    // kinematic into a one-element List<K> (cheap -- the bean travels as-is,
+    // no field extraction) and delegate.
+    PARTONS::List<PARTONS::DVCSObservableKinematic> list;
+    list.add(kinematic);
+    return computeTensorImplBatch(list)[0];
+}
+
+torch::Tensor DVCSAluMinusSin1PhiTorch::computeTensorImplBatch(
+        const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics) {
+
+    // Unpack the channel-generic bean list into raw [N] tensors. Each
+    // kinematic's own phi is ignored: this observable integrates over the
+    // full phi range regardless, same as the (former) computeTensorImpl().
+    const size_t N = kinematics.size();
+    std::vector<double> xBVec(N), tVec(N), Q2Vec(N), EVec(N);
+    for (size_t i = 0; i < N; ++i) {
+        const PARTONS::DVCSObservableKinematic& kin = kinematics[i];
+        xBVec[i] = kin.getXB().getValue();
+        tVec[i]  = kin.getT().getValue();
+        Q2Vec[i] = kin.getQ2().getValue();
+        EVec[i]  = kin.getE().getValue();
+    }
+    const torch::TensorOptions f64 = torch::TensorOptions().dtype(torch::kFloat64);
+    torch::Tensor xB = torch::tensor(xBVec, f64);
+    torch::Tensor t  = torch::tensor(tVec, f64);
+    torch::Tensor Q2 = torch::tensor(Q2Vec, f64);
+    torch::Tensor E  = torch::tensor(EVec, f64);
+
+    // A_LU(phi) * sin(phi), batched over N data points x the GL-10 quadrature
+    // nodes shared by every data point.
+    auto integrand = [this, &xB, &t, &Q2, &E](const torch::Tensor& phi) -> torch::Tensor {
+        return aLUTensorBatch(xB, t, Q2, E, phi) * torch::sin(phi);
     };
 
-    return integrateTorch(integrand, 0., 2. * PARTONS::Constant::PI)
+    return integrateTorchBatch(integrand, 0., 2. * PARTONS::Constant::PI)
             / PARTONS::Constant::PI;
 }

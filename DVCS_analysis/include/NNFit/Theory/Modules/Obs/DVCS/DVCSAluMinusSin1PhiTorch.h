@@ -5,6 +5,7 @@
 #ifndef DVCS_ALU_MINUS_SIN1PHI_TORCH_H
 #define DVCS_ALU_MINUS_SIN1PHI_TORCH_H
 
+#include <partons/beans/List.h>
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
 #include <torch/torch.h>
 
@@ -47,13 +48,36 @@ protected:
     DVCSAluMinusSin1PhiTorch(const DVCSAluMinusSin1PhiTorch& other);
 
     /**
-     * Differentiable A_LU^{sin1phi} at the given kinematics: the sin(phi) Fourier
-     * moment of the inherited pointwise asymmetry aLUTensor(). Overrides the
-     * pointwise ObservableTorch hook from DVCSAluMinusTorch.
+     * Differentiable A_LU^{sin1phi} at the given kinematics. Implemented as a
+     * thin N=1 wrapper around computeTensorImplBatch() -- single-point "is"
+     * batch-with-N=1, not a separately-maintained implementation (the
+     * vect_optionA design decision: one implementation, verified once against
+     * the pre-batching values, rather than two siblings cross-checked against
+     * each other). Overrides the pointwise ObservableTorch hook from
+     * DVCSAluMinusTorch; the scalar drop-in contract (computeObservable()
+     * wrapping computeTensor().item()) is unaffected -- it calls this method
+     * exactly as before.
      * @return 0-d torch::Tensor, grad-connected to the NN parameters.
      */
     torch::Tensor computeTensorImpl(
             const PARTONS::DVCSObservableKinematic& kinematic) override;
+
+    /**
+     * Batched (N-point) sibling of computeTensorImpl() -- the real
+     * ObservableTorch<K> batched hook implementation (channel-generic
+     * List<DVCSObservableKinematic>). Unpacks the list into
+     * xB[N]/t[N]/Q2[N]/E[N] tensors (each kinematic's own phi is ignored --
+     * this observable integrates over the full phi range regardless, same
+     * as computeTensorImpl()) and reduces to the sin(phi) Fourier moment of
+     * aLUTensorBatch(), batched over the GL-10 quadrature nodes shared by
+     * every data point -- exactly what aLUTensorBatch()/
+     * crossSectionTensorBatch() were built for. computeTensorImpl() (above)
+     * is a thin N=1 wrapper around this method, not a separate implementation.
+     * @return [N] torch::Tensor, grad-connected to the NN parameters.
+     */
+    torch::Tensor computeTensorImplBatch(
+            const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics)
+            override;
 };
 
 #endif /* DVCS_ALU_MINUS_SIN1PHI_TORCH_H */

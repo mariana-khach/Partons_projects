@@ -6,6 +6,7 @@
 #define OBSERVABLE_SERVICE_TORCH_H
 
 #include <ElementaryUtils/logger/CustomException.h>
+#include <partons/beans/List.h>
 #include <torch/torch.h>
 
 #include "NNFit/Theory/Modules/Obs/ObservableTorch.h"
@@ -54,6 +55,30 @@ public:
         }
 
         return pObservable->computeTensor(kinematic);
+    }
+
+    /**
+     * Differentiable many-kinematic (batched) computation.
+     *
+     * Mirrors computeSingleKinematicTorch() but drives the observable's batched
+     * hook (ObservableTorch<K>::computeTensorBatch(), channel-generic
+     * List<K>) instead of the single-point one, so gradients still propagate
+     * from the returned [N] tensor back to the NN parameters.
+     *
+     * @param kinematics  List of N observable kinematics.
+     * @param pObservable Tensor observable to drive (base-typed for polymorphism).
+     * @return [N] torch::Tensor holding the observable values.
+     */
+    torch::Tensor computeManyKinematicTorch(
+            const PARTONS::List<KinematicType>& kinematics,
+            ObservableTorch<KinematicType>* pObservable) const {
+
+        if (!pObservable) {
+            throw ElemUtils::CustomException("ObservableServiceTorch", __func__,
+                    "Null tensor observable passed to computeManyKinematicTorch.");
+        }
+
+        return pObservable->computeTensorBatch(kinematics);
     }
 };
 

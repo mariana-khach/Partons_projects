@@ -5,6 +5,7 @@
 #ifndef OBSERVABLE_TORCH_H
 #define OBSERVABLE_TORCH_H
 
+#include <partons/beans/List.h>
 #include <torch/torch.h>
 
 /**
@@ -44,6 +45,18 @@ public:
         return computeTensorImpl(kinematic);
     }
 
+    /**
+     * Batched (N-point) sibling of computeTensor(): the differentiable value
+     * at N kinematic points at once. Delegates to the computeTensorImplBatch()
+     * hook. Channel-agnostic: takes PARTONS' own List<KinematicType>,
+     * mirroring the scalar chain's computeManyKinematic bean-list convention.
+     * @return [N] torch::Tensor, grad-connected to the NN parameters.
+     */
+    torch::Tensor computeTensorBatch(
+            const PARTONS::List<KinematicType>& kinematics) {
+        return computeTensorImplBatch(kinematics);
+    }
+
 protected:
 
     /**
@@ -51,6 +64,13 @@ protected:
      * the tensor sibling of Observable::computeObservable().
      */
     virtual torch::Tensor computeTensorImpl(const KinematicType& kinematic) = 0;
+
+    /**
+     * Batched (N-point) sibling of computeTensorImpl(), supplied by the
+     * concrete leaf.
+     */
+    virtual torch::Tensor computeTensorImplBatch(
+            const PARTONS::List<KinematicType>& kinematics) = 0;
 };
 
 #endif /* OBSERVABLE_TORCH_H */

@@ -64,6 +64,17 @@ public:
     };
 
     /**
+     * Batched (N-point) sibling of AllCFFsTensor: each field is a [N] complex
+     * (float64) tensor instead of 0-d.
+     */
+    struct AllCFFsTensorBatch {
+        torch::Tensor H;  ///< CFF H  ([N] complex double).
+        torch::Tensor E;  ///< CFF E.
+        torch::Tensor Ht; ///< CFF Ht (H-tilde).
+        torch::Tensor Et; ///< CFF Et (E-tilde).
+    };
+
+    /**
      * Set the CFF-module kinematics for the tensor path (the scalar path sets
      * them through PARTONS' setKinematics, which is protected). Must be called
      * before computeAllCFFsTensor()/computeCFFTensor().
@@ -82,8 +93,32 @@ public:
     /**
      * The CFF of a single GPD type as a 0-d complex tensor (grad-tracked).
      * Returns 0 for types the network does not output.
+     *
+     * Implemented as a thin N=1 wrapper around computeCFFTensorBatch() (the
+     * batched implementation is the single source of truth; this method and
+     * computeAllCFFsTensor() exist because they're independently called by
+     * PARTONS' base-scalar pipeline via computeCFF() -- see the vect_optionA
+     * "single-point = batch with N=1" design decision).
      */
     torch::Tensor computeCFFTensor(PARTONS::GPDType::Type type);
+
+    /**
+     * Batched (N-point) sibling of computeAllCFFsTensor(): one NN forward
+     * pass over all N points at once.
+     * @param xB,t,Q2 [N] raw kinematics tensors.
+     */
+    AllCFFsTensorBatch computeAllCFFsTensorBatch(const torch::Tensor& xB,
+            const torch::Tensor& t, const torch::Tensor& Q2);
+
+    /**
+     * Batched (N-point) sibling of computeCFFTensor(): the CFF of a single
+     * GPD type as an [N] complex tensor. Returns 0 for types the network
+     * does not output.
+     * @param xB,t,Q2 [N] raw kinematics tensors.
+     */
+    torch::Tensor computeCFFTensorBatch(PARTONS::GPDType::Type type,
+            const torch::Tensor& xB, const torch::Tensor& t,
+            const torch::Tensor& Q2);
 
     /**
      * Inject the trained libtorch model, the output layer name list, the
@@ -137,10 +172,28 @@ private:
     torch::Tensor forwardNN();
 
     /**
+     * Batched (N-point) sibling of forwardNN(): run the NN once on [xB,t,Q2]
+     * stacked as an [N,3] input (with optional min-max scaling) and return
+     * the [N, Nout] output cast to float64, autograd graph intact.
+     * @param xB,t,Q2 [N] raw kinematics tensors.
+     */
+    torch::Tensor forwardNNBatch(const torch::Tensor& xB, const torch::Tensor& t,
+            const torch::Tensor& Q2);
+
+    /**
      * Build a 0-d complex (float64) tensor from the named Re/Im output neurons,
      * or 0 if the network does not provide them.
      */
     torch::Tensor cffComponentTensor(const torch::Tensor& output,
+            const std::string& name) const;
+
+    /**
+     * Batched (N-point) sibling of cffComponentTensor(): build an [N] complex
+     * (float64) tensor from the named Re/Im output columns, or zeros if the
+     * network does not provide them.
+     * @param output [N, Nout] NN output (as returned by forwardNNBatch()).
+     */
+    torch::Tensor cffComponentTensorBatch(const torch::Tensor& output,
             const std::string& name) const;
 
     CFFNNModel               m_net{nullptr};   ///< Trained libtorch model.

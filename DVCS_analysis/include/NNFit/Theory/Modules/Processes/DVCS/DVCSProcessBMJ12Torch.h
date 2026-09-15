@@ -58,6 +58,14 @@ public:
     torch::Tensor crossSectionInterfTensor(double beamHelicity, double beamCharge,
             const torch::Tensor& phi) override;
 
+    // Batched (N-point) siblings, [N,M] (N data points x M phi nodes).
+    torch::Tensor crossSectionBHTensorBatch(double beamHelicity, double beamCharge,
+            const torch::Tensor& phi) override;
+    torch::Tensor crossSectionVCSTensorBatch(double beamHelicity, double beamCharge,
+            const torch::Tensor& phi) override;
+    torch::Tensor crossSectionInterfTensorBatch(double beamHelicity, double beamCharge,
+            const torch::Tensor& phi) override;
+
 protected:
 
     DVCSProcessBMJ12Torch(const DVCSProcessBMJ12Torch& other);
@@ -73,6 +81,16 @@ private:
      */
     void setupKinematicsTorch(
             const PARTONS::DVCSObservableKinematic& kinematic) override;
+
+    /**
+     * Batched (N-point) sibling of setupKinematicsTorch(): the BMJ12 derived
+     * quantities and angular coefficients re-expressed as [N]-tensor
+     * arithmetic (same formulas, double -> tensor), plus one batched NN
+     * forward for the CFFs. Called once by the base crossSectionTensorBatch()
+     * template method.
+     */
+    void setupKinematicsTorchBatch(const torch::Tensor& xB, const torch::Tensor& t,
+            const torch::Tensor& Q2, const torch::Tensor& E) override;
 
     // ----- tensor CFF layer -----------------------------------------------
 
@@ -90,6 +108,22 @@ private:
     /** Harmonic-n interference combinations (cosine / sine towers). */
     torch::Tensor C_I0n(unsigned int n, int a, int b) const;
     torch::Tensor S_I0n(unsigned int n, int a, int b) const;
+
+    // ----- batched tensor CFF layer (mirror of the block above, [N]-shaped) --
+
+    /** Batched sibling of cffTensor(): [N] complex. */
+    torch::Tensor cffTensorBatch(int F, int a, int b) const;
+
+    /** Batched siblings of C_VCS0(): [N] complex. */
+    torch::Tensor C_VCS0Batch(int a1, int b1, int a2, int b2) const;
+    torch::Tensor C_VCS0Batch(int a1, int b1, int a2, int b2, int a3, int b3) const;
+    torch::Tensor C_VCS0Batch(int a1, int b1, int a2, int b2, int a3, int b3,
+            int a4, int b4) const;
+
+    /** Batched siblings of C_I0()/C_I0n()/S_I0n(): [N] complex. */
+    torch::Tensor C_I0Batch(int a, int b, const std::string& VA) const;
+    torch::Tensor C_I0nBatch(unsigned int n, int a, int b) const;
+    torch::Tensor S_I0nBatch(unsigned int n, int a, int b) const;
 
     // ----- cached state ----------------------------------------------------
 
@@ -116,8 +150,39 @@ private:
     double m_yeps;           ///< y (1 + eps^2).
     double m_cF[3];          ///< cF[j][0] coefficients (j = 0,1,2).
     double m_cBH0[3];        ///< Unpolarized BH Fourier coeffs c0,c1,c2.
-    double m_Cang[3][3][4];  ///< Interference angular coeffs C (i, k, n).
-    double m_Sang[3][3][4];  ///< Interference angular coeffs S (i, k, n).
+    // Zero-initialized: not every (i,k,n) slot is assigned by
+    // setupKinematicsTorch() below, but some unassigned slots (e.g. Cang[2][*][3])
+    // are genuinely read downstream -- an uninitialized double there is UB
+    // (confirmed via diagnostic: reads as subnormal garbage without this).
+    double m_Cang[3][3][4] = {};  ///< Interference angular coeffs C (i, k, n).
+    double m_Sang[3][3][4] = {};  ///< Interference angular coeffs S (i, k, n).
+
+    // ----- batched cached state (mirror of the block above, [N]-shaped) -----
+    // CFFs from the NN, batched ([N] complex double, grad-tracked)
+    torch::Tensor m_CFFstdBatch[4];
+    torch::Tensor m_CFFBatch[4][3];
+
+    // BMJ12 kinematics, batched ([N] tensors, no gradient)
+    torch::Tensor m_xBBatch, m_tBatch, m_Q2Batch;     ///< Cached raw kinematics.
+    torch::Tensor m_xB2Batch;
+    torch::Tensor m_QpowBatch[4];
+    torch::Tensor m_Delta2Batch[2];
+    torch::Tensor m_xBtQ2Batch[3];
+    torch::Tensor m_yBMJBatch[3];
+    torch::Tensor m_epsilonBMJBatch[2];
+    torch::Tensor m_epsrootBatch[6];
+    torch::Tensor m_KBatch[2];
+    torch::Tensor m_KtBatch[2];
+    torch::Tensor m_tminBMJBatch;
+    torch::Tensor m_tmaxBMJBatch;
+    torch::Tensor m_F1Batch, m_F2Batch;
+    torch::Tensor m_phaseSpaceBMJBatch;
+    torch::Tensor m_JBatch;
+    torch::Tensor m_yepsBatch;
+    torch::Tensor m_cFBatch[3];
+    torch::Tensor m_cBH0Batch[3];
+    torch::Tensor m_CangBatch[3][3][4];
+    torch::Tensor m_SangBatch[3][3][4];
 };
 
 #endif /* DVCS_PROCESS_BMJ12_TORCH_H */

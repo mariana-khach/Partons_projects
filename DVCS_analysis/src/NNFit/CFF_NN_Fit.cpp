@@ -10,6 +10,7 @@
 #include "../../include/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.h"
 #include "../../include/NNFit/Theory/Modules/Services/DVCS/DVCSObservableServiceTorch.h"
 
+#include <partons/beans/List.h>
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
 #include <partons/beans/observable/ObservableResult.h>
 #include <partons/beans/PerturbativeQCDOrderType.h>
@@ -136,6 +137,27 @@ CFF_NN_Fitter::FitOutcome CFF_NN_Fitter::fit_once(const torch::Tensor& X,
     torch::Tensor y_train   = split(y_used, idx_train), y_val  = split(y_used, idx_val);
     torch::Tensor s_train   = split(sigma, idx_train), s_val   = split(sigma, idx_val);
 
+    // Build the train/val kinematics Lists ONCE here (not per epoch inside
+    // CustomLoss::forward()) -- the kinematics are fixed for the whole
+    // fit_once() call (only the NN weights change epoch to epoch), so the
+    // List<K> pack cost is paid once per fit rather than 2x per epoch.
+    auto buildKinematicList = [](const torch::Tensor& Xs, const torch::Tensor& Es,
+            const torch::Tensor& phis) {
+        PARTONS::List<PARTONS::DVCSObservableKinematic> list;
+        const int m = static_cast<int>(Xs.size(0));
+        for (int i = 0; i < m; ++i) {
+            list.add(PARTONS::DVCSObservableKinematic(
+                    Xs[i][0].item<double>(), Xs[i][1].item<double>(),
+                    Xs[i][2].item<double>(), Es[i].item<double>(),
+                    phis[i].item<double>()));
+        }
+        return list;
+    };
+    PARTONS::List<PARTONS::DVCSObservableKinematic> trainKin =
+            buildKinematicList(X_train, E_train, phi_train);
+    PARTONS::List<PARTONS::DVCSObservableKinematic> valKin =
+            buildKinematicList(X_val, E_val, phi_val);
+
     // Per-feature min-max from THIS attempt's own training kinematics. Applied
     // INSIDE the NN module (passed to CustomLoss -> setModel below); X stays
     // RAW here because the observable chain builds its kinematics from raw
@@ -193,8 +215,7 @@ CFF_NN_Fitter::FitOutcome CFF_NN_Fitter::fit_once(const torch::Tensor& X,
         // Training step — reduced chi^2 (chi^2/n) on the observable
         net->train();
         optimizer.zero_grad();
-        torch::Tensor loss_train =
-                loss_fn(X_train, E_train, phi_train, y_train, s_train);
+        torch::Tensor loss_train = loss_fn(trainKin, y_train, s_train);
         loss_train.backward();
         optimizer.step();
 
@@ -202,7 +223,7 @@ CFF_NN_Fitter::FitOutcome CFF_NN_Fitter::fit_once(const torch::Tensor& X,
         float val_loss;
         {
             torch::NoGradGuard no_grad;
-            val_loss = loss_fn(X_val, E_val, phi_val, y_val, s_val).item<float>();
+            val_loss = loss_fn(valKin, y_val, s_val).item<float>();
         }
 
         // Hopeless checks: divergence, or still bad at the checkpoint epoch.

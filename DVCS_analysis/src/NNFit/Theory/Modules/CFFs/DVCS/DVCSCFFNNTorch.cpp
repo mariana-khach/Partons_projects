@@ -10,6 +10,7 @@
 #include <partons/modules/convol_coeff_function/ConvolCoeffFunctionModule.h>
 
 #include <cmath>
+#include <iostream>
 #include <stdexcept>
 
 // ---------------------------------------------------------------------------
@@ -170,20 +171,74 @@ torch::Tensor DVCSCFFNNTorch::cffComponentTensor(const torch::Tensor& output,
 }
 
 // ---------------------------------------------------------------------------
+// Batched NN forward (single source of truth for the CFF value itself;
+// forwardNN()/computeCFFTensor()/computeAllCFFsTensor() are N=1 wrappers).
+// ---------------------------------------------------------------------------
+
+torch::Tensor DVCSCFFNNTorch::forwardNNBatch(const torch::Tensor& xB,
+        const torch::Tensor& t, const torch::Tensor& Q2) {
+
+    if (!m_net)
+        throw ElemUtils::CustomException(getClassName(), __func__,
+                "Pytorch model has not been set. Call setModel() first.");
+
+    // Stack [xB,t,Q2] as an [N,3] input (mirrors forwardNN()'s [1,3] build).
+    torch::Tensor input = torch::stack({xB, t, Q2}, /*dim=*/1).to(torch::kFloat32);
+
+    // Same per-feature min-max scaling as forwardNN(). Skipped if no scaling
+    // was injected (raw features).
+    if (m_xMin.defined() && m_xMax.defined()) {
+        torch::Tensor denom = (m_xMax - m_xMin).clamp_min(1e-8f);
+        input = (input - m_xMin) / denom;
+    }
+
+    m_net->eval();
+    // Network runs in float32; promote to float64 so downstream BMJ12
+    // arithmetic matches the scalar (double) pipeline.
+    torch::Tensor output = m_net->forward(input).to(torch::kFloat64); // [N, Nout]
+
+    // CFF = xB^m_xPow * NNet_output, broadcast over the N axis.
+    torch::Tensor xPowFactor = torch::pow(xB.to(torch::kFloat64), m_xPow); // [N]
+    return output * xPowFactor.unsqueeze(1); // [N, Nout]
+}
+
+torch::Tensor DVCSCFFNNTorch::cffComponentTensorBatch(const torch::Tensor& output,
+        const std::string& name) const {
+
+    const std::string reName = "Re" + name;
+    const std::string imName = "Im" + name;
+
+    int reIdx = -1, imIdx = -1;
+    for (int k = 0; k < static_cast<int>(m_outputLayer.size()); ++k) {
+        if (m_outputLayer[k] == reName) reIdx = k;
+        if (m_outputLayer[k] == imName) imIdx = k;
+    }
+
+    const int64_t N = output.size(0);
+    const torch::TensorOptions f64 = torch::TensorOptions().dtype(torch::kFloat64);
+    torch::Tensor re = (reIdx >= 0) ? output.select(1, reIdx) : torch::zeros({N}, f64);
+    torch::Tensor im = (imIdx >= 0) ? output.select(1, imIdx) : torch::zeros({N}, f64);
+
+    return torch::complex(re, im); // [N] complex double, grad-tracked
+}
+
+// ---------------------------------------------------------------------------
 // Tensor CFFs
 // ---------------------------------------------------------------------------
 
-DVCSCFFNNTorch::AllCFFsTensor DVCSCFFNNTorch::computeAllCFFsTensor() {
-    torch::Tensor output = forwardNN();
-    AllCFFsTensor cffs;
-    cffs.H  = cffComponentTensor(output, "H");
-    cffs.E  = cffComponentTensor(output, "E");
-    cffs.Ht = cffComponentTensor(output, "Ht");
-    cffs.Et = cffComponentTensor(output, "Et");
+DVCSCFFNNTorch::AllCFFsTensorBatch DVCSCFFNNTorch::computeAllCFFsTensorBatch(
+        const torch::Tensor& xB, const torch::Tensor& t, const torch::Tensor& Q2) {
+    torch::Tensor output = forwardNNBatch(xB, t, Q2);
+    AllCFFsTensorBatch cffs;
+    cffs.H  = cffComponentTensorBatch(output, "H");
+    cffs.E  = cffComponentTensorBatch(output, "E");
+    cffs.Ht = cffComponentTensorBatch(output, "Ht");
+    cffs.Et = cffComponentTensorBatch(output, "Et");
     return cffs;
 }
 
-torch::Tensor DVCSCFFNNTorch::computeCFFTensor(PARTONS::GPDType::Type type) {
+torch::Tensor DVCSCFFNNTorch::computeCFFTensorBatch(PARTONS::GPDType::Type type,
+        const torch::Tensor& xB, const torch::Tensor& t, const torch::Tensor& Q2) {
     std::string name;
     switch (type) {
     case PARTONS::GPDType::H:  name = "H";  break;
@@ -192,10 +247,43 @@ torch::Tensor DVCSCFFNNTorch::computeCFFTensor(PARTONS::GPDType::Type type) {
     case PARTONS::GPDType::Et: name = "Et"; break;
     default:
         // Types the NN does not parametrize (e.g. transversity / twist-3)
-        return torch::complex(torch::zeros({}, torch::kFloat64),
-                torch::zeros({}, torch::kFloat64));
+        return torch::complex(torch::zeros({xB.size(0)}, torch::kFloat64),
+                torch::zeros({xB.size(0)}, torch::kFloat64));
     }
-    return cffComponentTensor(forwardNN(), name);
+    return cffComponentTensorBatch(forwardNNBatch(xB, t, Q2), name);
+}
+
+// ---------------------------------------------------------------------------
+// Single-point CFFs -- N=1 wrappers around the batched implementation above
+// (still independently called: computeAllCFFsTensor() by the process
+// module's own single-point setup, computeCFFTensor() by computeCFF(),
+// which PARTONS' base-scalar pipeline calls directly via observ_calc()).
+// ---------------------------------------------------------------------------
+
+DVCSCFFNNTorch::AllCFFsTensor DVCSCFFNNTorch::computeAllCFFsTensor() {
+    // xB derived from PARTONS skewness (matches the pre-batching convention;
+    // m_xi/m_t/m_Q2 are set by setupKinematicsTorch()).
+    double xB = 2.0 * m_xi / (1.0 + m_xi);
+    torch::Tensor xBT = torch::full({1}, xB, torch::kFloat64);
+    torch::Tensor tT  = torch::full({1}, m_t, torch::kFloat64);
+    torch::Tensor Q2T = torch::full({1}, m_Q2, torch::kFloat64);
+
+    AllCFFsTensorBatch batch = computeAllCFFsTensorBatch(xBT, tT, Q2T);
+    AllCFFsTensor cffs;
+    cffs.H  = batch.H[0];
+    cffs.E  = batch.E[0];
+    cffs.Ht = batch.Ht[0];
+    cffs.Et = batch.Et[0];
+    return cffs;
+}
+
+torch::Tensor DVCSCFFNNTorch::computeCFFTensor(PARTONS::GPDType::Type type) {
+    double xB = 2.0 * m_xi / (1.0 + m_xi);
+    torch::Tensor xBT = torch::full({1}, xB, torch::kFloat64);
+    torch::Tensor tT  = torch::full({1}, m_t, torch::kFloat64);
+    torch::Tensor Q2T = torch::full({1}, m_Q2, torch::kFloat64);
+
+    return computeCFFTensorBatch(type, xBT, tT, Q2T)[0];
 }
 
 // ---------------------------------------------------------------------------
