@@ -36,6 +36,12 @@ struct TrainedModel {
 class CFF_NN_Fitter {
 
 public:
+    // Directory every fit output is written to: learning curves, per-point
+    // predictions, model evaluation, and the exported model JSON. Absolute
+    // path -- update this (and the data path passed to the constructor) on an
+    // environment move.
+    static const std::string OUT_DIR;
+
     explicit CFF_NN_Fitter(
         const std::string& data_path,
         float test_fraction = 0.3f,

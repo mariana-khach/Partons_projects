@@ -35,6 +35,9 @@
 #include <stdexcept>
 
 
+const std::string CFF_NN_Fitter::OUT_DIR =
+        "/Users/marianav/Documents/Research/Analysis/GPD_studies/git/Partons/DVCS_analysis/My_Analysis/Partons_output";
+
 CFF_NN_Fitter::CFF_NN_Fitter(const std::string& data_path,
                                float test_fraction,
                                const std::vector<std::string>& output_layer,
@@ -278,13 +281,11 @@ void CFF_NN_Fitter::train_nn() {
 
     auto [X, E, phi, y_obs, sigma] = load_data_observable();
 
-    const std::string out_dir = "/Users/marianav/Documents/Research/Analysis/GPD_studies/git/Partons/DVCS_analysis/My_Analysis/Partons_output";
-
     // Central (unsmeared) fit — no hopeless-abort/retry (hopeless_check_epoch=0
     // disables the periodic threshold check; matches this method's original
     // always-run-to-completion-or-early-stop behavior).
     FitOutcome outcome = fit_once(X, E, phi, y_obs, sigma, /*smear=*/false,
-            out_dir + "/cff_learning_curve.csv",
+            OUT_DIR + "/cff_learning_curve.csv",
             /*hopeless_val_loss=*/std::numeric_limits<float>::max(),
             /*hopeless_check_epoch=*/0, /*seed=*/std::random_device{}());
 
@@ -300,8 +301,6 @@ void CFF_NN_Fitter::train_replicas(int n_replicas, int max_retries_per_replica,
 
     auto [X, E, phi, y_obs, sigma] = load_data_observable();
 
-    const std::string out_dir = "/Users/marianav/Documents/Research/Analysis/GPD_studies/git/Partons/DVCS_analysis/My_Analysis/Partons_output";
-
     m_replicas.clear();
     m_replicas.reserve(n_replicas);
 
@@ -314,7 +313,7 @@ void CFF_NN_Fitter::train_replicas(int n_replicas, int max_retries_per_replica,
         // the central fit's). fit_once() truncates on open, so across retries the
         // surviving file is the kept attempt's curve.
         const std::string curve_path = (r == n_replicas - 1)
-                ? out_dir + "/cff_learning_curve_last_replica.csv"
+                ? OUT_DIR + "/cff_learning_curve_last_replica.csv"
                 : std::string();
 
         FitOutcome outcome{TrainedModel{}, true};
@@ -406,12 +405,11 @@ void CFF_NN_Fitter::predict() {
     torch::Tensor y_true = y_obs.to(torch::kFloat64);
     torch::Tensor sig    = sigma.to(torch::kFloat64);
 
-    const std::string out_dir = "/Users/marianav/Documents/Research/Analysis/GPD_studies/git/Partons/DVCS_analysis/My_Analysis/Partons_output";
 
     // Per-point predicted vs measured observable.
-    std::ofstream csv(out_dir + "/obs_prediction.csv", std::ios::trunc);
+    std::ofstream csv(OUT_DIR + "/obs_prediction.csv", std::ios::trunc);
     if (!csv)
-        throw std::runtime_error("Cannot open obs_prediction.csv for writing in: " + out_dir);
+        throw std::runtime_error("Cannot open obs_prediction.csv for writing in: " + OUT_DIR);
     csv << "xB,t,Q2,E,phi,obs_true,obs_pred,error\n";
     for (int i = 0; i < n; ++i) {
         csv << X[i][0].item<float>() << "," << X[i][1].item<float>() << ","
@@ -431,9 +429,9 @@ void CFF_NN_Fitter::predict() {
     float r2     = (ss_tot > 0.f) ? 1.f - ss_res / ss_tot : 0.f;
     float chi2   = ((y_pred - y_true) / sig).pow(2).mean().item<float>();
 
-    std::ofstream eval(out_dir + "/obs_model_eval.csv", std::ios::trunc);
+    std::ofstream eval(OUT_DIR + "/obs_model_eval.csv", std::ios::trunc);
     if (!eval)
-        throw std::runtime_error("Cannot open obs_model_eval.csv for writing in: " + out_dir);
+        throw std::runtime_error("Cannot open obs_model_eval.csv for writing in: " + OUT_DIR);
     eval << "observable,mse,r_squared,chi2\n";
     eval << pDVCSObs->getClassName() << "," << mse << "," << r2 << "," << chi2 << "\n";
 
@@ -443,7 +441,7 @@ void CFF_NN_Fitter::predict() {
 
     // Persist the trained model (weights + scaling + labels) for out-of-process
     // CFF scans/plots (read by CFF_obs_train_predict_plot.ipynb).
-    export_model_json(out_dir + "/cff_model.json");
+    export_model_json(OUT_DIR + "/cff_model.json");
 }
 
 void CFF_NN_Fitter::export_model_json(const std::string& path) const {
