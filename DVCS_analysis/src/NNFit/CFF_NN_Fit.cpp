@@ -300,12 +300,22 @@ void CFF_NN_Fitter::train_replicas(int n_replicas, int max_retries_per_replica,
 
     auto [X, E, phi, y_obs, sigma] = load_data_observable();
 
+    const std::string out_dir = "/Users/marianav/Documents/Research/Analysis/GPD_studies/git/Partons/DVCS_analysis/My_Analysis/Partons_output";
+
     m_replicas.clear();
     m_replicas.reserve(n_replicas);
 
     for (int r = 0; r < n_replicas; ++r) {
 
         std::cout << "\n=== Replica " << r << " ===\n";
+
+        // Only the last replica writes a curve, as a replica-fit diagnostic
+        // (it is fit to smeared pseudodata, so its chi^2/n is not comparable to
+        // the central fit's). fit_once() truncates on open, so across retries the
+        // surviving file is the kept attempt's curve.
+        const std::string curve_path = (r == n_replicas - 1)
+                ? out_dir + "/cff_learning_curve_last_replica.csv"
+                : std::string();
 
         FitOutcome outcome{TrainedModel{}, true};
         int attempt = 0;
@@ -315,7 +325,7 @@ void CFF_NN_Fitter::train_replicas(int n_replicas, int max_retries_per_replica,
                     : base_seed + static_cast<unsigned>(r) * 100u
                             + static_cast<unsigned>(attempt);
             outcome = fit_once(X, E, phi, y_obs, sigma, /*smear=*/true,
-                    /*learning_curve_path=*/"", hopeless_val_loss, hopeless_check_epoch,
+                    curve_path, hopeless_val_loss, hopeless_check_epoch,
                     seed, normalize_loss);
             if (!outcome.hopeless) break;
             std::cout << "Replica " << r << " attempt " << attempt

@@ -140,7 +140,8 @@ Data path and output paths are hardcoded absolute paths in `src/Run_CFF_NN_Fit.c
 
 | File | Content | Written by |
 |---|---|---|
-| `cff_learning_curve.csv` | epoch, train reduced χ²/n, val reduced χ²/n (every 2 epochs) — central fit only, `train_replicas()` passes `""` to skip this per-replica | `train_nn()` (via `fit_once()`) |
+| `cff_learning_curve.csv` | epoch, train reduced χ²/n, val reduced χ²/n (every 2 epochs) — central fit | `train_nn()` (via `fit_once()`) |
+| `cff_learning_curve_last_replica.csv` | same format, for the **last** replica only (`r == n_replicas-1`); other replicas pass `""` to skip. A replica-fit diagnostic — it is fit to smeared pseudodata, so do **not** compare its χ²/n to the central fit's against real data. `fit_once()` truncates on open, so across retries the surviving file is the kept attempt's curve. | `train_replicas()` (via `fit_once()`) |
 | `obs_prediction.csv` | `xB,t,Q2,E,phi,obs_true,obs_pred,error` per point | `predict()` |
 | `obs_model_eval.csv` | `observable,mse,r_squared,chi2` (chi2 = reduced χ²/n) | `predict()` |
 | `cff_model.json` | trained NN export — `arch`, `dtype`, `best_val_chi2`, `input_features`, `x_pow`, `output_layer` (= `m_output_layer`), min-max `scaling`, and `fc1`/`fc2` weights+biases. Lets the exact NN forward be reproduced out-of-process (CFF scans/plots in `CFF_obs_train_predict_plot.ipynb`) | `predict()` (`export_model_json`) |
@@ -744,6 +745,14 @@ Note what this check actually is: `observ_calc_torch_scalar()` still routes *thr
 
 - **`m_preparedBatch` is a coarse guard, and that is fine.** It records "has `prepareTensorBatch` ever been called," never resets, and so cannot detect an assemble call that doesn't match the cached batch. This was examined at length and judged **not** a hazard worth pre-empting: the only way to trigger it is code that unpacks its kinematics and then never passes them to the process module — visibly broken data flow, an unused-variable warning, and instantly wrong χ² on the first run. A token/generation-counter fix was drafted and rejected as ceremony around a two-line prepare→assemble sequence. If threading is ever added over a shared process-module instance, the flag is the least of it — every `m_*Batch` member and the cached CFF tensors are unsynchronized, and the 2026-06-22 conclusion (clone-per-thread) is the answer.
 - **`predict()` still loops per point** with `computeSingleKinematicTorch` while `CustomLoss` uses the batched `computeManyKinematicTorch`. Harmless (runs once per fit, not per epoch); worth switching only if touching that function anyway.
+
+### `train_replicas()` now writes the last replica's learning curve
+
+`CFF_plots_ALU_2007_xpow_replica.ipynb` had gained a cell reading `cff_learning_curve_last_replica.csv`, but `train_replicas()` passed `""` for every replica, so nothing produced it — the copy on disk was a stale Sep-10 artifact, and `*.csv` is gitignored, so the cell could not reproduce from a clean run. Fixed in `train_replicas()`: the last replica (`r == n_replicas-1`) now passes a real path; the rest still pass `""`. Retries need no special handling — `fit_once()` opens with `std::ios::trunc` and the kept model is always the last attempt run, so the surviving file matches the kept replica.
+
+Note this adds a **third** copy of the hardcoded `out_dir` absolute path (alongside `train_nn()` and `predict()`), following the file's existing convention. Worth hoisting to one constant if these paths are ever touched again — and they must be, on any environment move.
+
+Verified on a 10-replica run: the file is rewritten (812 rows, every 2 epochs through 1622), and replica 9 early-stopped at epoch 1623 with best val χ²/n **5.12**. Worth noting what that curve shows — train falls to 0.62 while val climbs to 8.28, i.e. **pronounced overfitting well before early stopping fires**. Best val was reached around epoch ~620 and `patience = 1000` then ran another ~1000 epochs uphill. On a 16-point dataset split into train/val that is not surprising, but it means (a) replica χ²/n values sit far above the smearing noise floor, so the replica band is likely wider than the data alone justifies, and (b) `patience = 1000` (raised from 200 on 2026-09-01) may now be overshooting. Untested hypotheses — flagged for whoever tunes the replica hyperparameters next.
 
 ### Open tasks (carried forward)
 
