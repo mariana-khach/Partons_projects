@@ -32,7 +32,7 @@ int main(int argc, char** argv) {
 
         // Monte Carlo replica ensemble (smeared pseudodata) for a CFF
         // uncertainty band, alongside the central fit above.
-        fitter.train_replicas(1);
+        fitter.train_replicas(10);
         fitter.export_replicas(
             "/Users/marianav/Documents/Research/Analysis/GPD_studies/git/Partons/DVCS_analysis/My_Analysis/Partons_output");
 
