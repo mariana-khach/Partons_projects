@@ -23,10 +23,11 @@
  * the scalar pipeline it behaves exactly like the base class (the inherited
  * scalar CrossSection* virtuals + the attached DVCSCFFNNTorch scalar wrapper).
  *
- * For the tensor path it adds crossSectionTensor(): the BMJ12 unpolarized-target
- * cross section sigma(lambda, phi) evaluated batched over a [N] tensor of phi
- * values, with the CFFs taken as complex tensors from DVCSCFFNNTorch so that the
- * autograd graph runs from the NN parameters to the cross section.
+ * For the tensor path it adds crossSectionTensorBatch(): the BMJ12
+ * unpolarized-target cross section sigma(lambda, phi), batched over N
+ * kinematic points x M phi nodes, with the CFFs taken as complex tensors from
+ * DVCSCFFNNTorch so that the autograd graph runs from the NN parameters to
+ * the cross section.
  *
  * The pure-kinematic BMJ12 machinery (Fourier/angular coefficients, K, epsilon,
  * form factors, phase space, ...) is transcribed verbatim from
@@ -47,18 +48,11 @@ public:
 
     virtual DVCSProcessBMJ12Torch* clone() const override;
 
-    // Sub-process cross sections sigma_X(lambda, phi), batched over phi (tensor
-    // siblings of CrossSectionBH / CrossSectionVCS / CrossSectionInterf). Each
-    // assumes the phi-independent setup has run; the base crossSectionTensor()
-    // template method drives setup + the selected sum.
-    torch::Tensor crossSectionBHTensor(double beamHelicity, double beamCharge,
-            const torch::Tensor& phi) override;
-    torch::Tensor crossSectionVCSTensor(double beamHelicity, double beamCharge,
-            const torch::Tensor& phi) override;
-    torch::Tensor crossSectionInterfTensor(double beamHelicity, double beamCharge,
-            const torch::Tensor& phi) override;
-
-    // Batched (N-point) siblings, [N,M] (N data points x M phi nodes).
+    // Sub-process cross sections sigma_X(lambda, phi), batched over N data
+    // points x M phi nodes (tensor siblings of CrossSectionBH / CrossSectionVCS
+    // / CrossSectionInterf). Each assumes the phi-independent setup has run;
+    // the base crossSectionTensorBatch() template method drives setup + the
+    // selected sum.
     torch::Tensor crossSectionBHTensorBatch(double beamHelicity, double beamCharge,
             const torch::Tensor& phi) override;
     torch::Tensor crossSectionVCSTensorBatch(double beamHelicity, double beamCharge,
@@ -73,45 +67,17 @@ protected:
 private:
 
     /**
-     * Prepare the phi-independent quantities for the tensor path at the given
-     * kinematics: reuse the base protected kinematics, transcribe the BMJ12
-     * derived quantities and angular coefficients, push (xi, t, Q2) to the
-     * attached DVCSCFFNNTorch and run one NN forward to cache the CFF tensors.
-     * Called once by the base crossSectionTensor() template method.
-     */
-    void setupKinematicsTorch(
-            const PARTONS::DVCSObservableKinematic& kinematic) override;
-
-    /**
-     * Batched (N-point) sibling of setupKinematicsTorch(): the BMJ12 derived
-     * quantities and angular coefficients re-expressed as [N]-tensor
-     * arithmetic (same formulas, double -> tensor), plus one batched NN
-     * forward for the CFFs. Called once by the base crossSectionTensorBatch()
-     * template method.
+     * Batched (N-point) sibling of setupKinematicsTorch: the BMJ12 derived
+     * quantities and angular coefficients as [N]-tensor arithmetic, plus one
+     * batched NN forward for the CFFs. Called once by the base
+     * crossSectionTensorBatch() template method.
      */
     void setupKinematicsTorchBatch(const torch::Tensor& xB, const torch::Tensor& t,
             const torch::Tensor& Q2, const torch::Tensor& E) override;
 
-    // ----- tensor CFF layer -----------------------------------------------
+    // ----- batched tensor CFF layer -----------------------------------------
 
-    /** CFF tensor for GPD index F (0=H,1=E,2=Ht,3=Et) and helicity labels a,b. */
-    torch::Tensor cffTensor(int F, int a, int b) const;
-
-    /** S=0 VCS contraction C^{VCS}_0 (bilinear in CFFs), 2 / 3 / 4 pair forms. */
-    torch::Tensor C_VCS0(int a1, int b1, int a2, int b2) const;
-    torch::Tensor C_VCS0(int a1, int b1, int a2, int b2, int a3, int b3) const;
-    torch::Tensor C_VCS0(int a1, int b1, int a2, int b2, int a3, int b3, int a4,
-            int b4) const;
-
-    /** S=0 interference contraction C^{I}_0 (linear in CFFs), VA in {"","V","A"}. */
-    torch::Tensor C_I0(int a, int b, const std::string& VA) const;
-    /** Harmonic-n interference combinations (cosine / sine towers). */
-    torch::Tensor C_I0n(unsigned int n, int a, int b) const;
-    torch::Tensor S_I0n(unsigned int n, int a, int b) const;
-
-    // ----- batched tensor CFF layer (mirror of the block above, [N]-shaped) --
-
-    /** Batched sibling of cffTensor(): [N] complex. */
+    /** Batched CFF tensor for GPD index F (0=H,1=E,2=Ht,3=Et), [N] complex. */
     torch::Tensor cffTensorBatch(int F, int a, int b) const;
 
     /** Batched siblings of C_VCS0(): [N] complex. */
@@ -125,39 +91,13 @@ private:
     torch::Tensor C_I0nBatch(unsigned int n, int a, int b) const;
     torch::Tensor S_I0nBatch(unsigned int n, int a, int b) const;
 
-    // ----- cached state ----------------------------------------------------
+    // ----- cached state ------------------------------------------------------
 
-    // CFFs from the NN (0-d complex double, grad-tracked)
-    torch::Tensor m_CFFstd[4];   ///< H, E, Ht, Et.
-    torch::Tensor m_CFF[4][3];   ///< m_CFF[F][j] = cF[j]*CFFstd[F], j in {0,1,2}.
+    /// Proton mass, M^2 -- a scalar constant, shared (unsuffixed) by the
+    /// batched setup and CFF layer below; not per-point, so not tensorized.
+    double m_M[2];
 
-    // BMJ12 kinematics (doubles, no gradient) — transcribed from DVCSProcessBMJ12
-    double m_xB2;
-    double m_Qpow[4];        ///< Q, Q^2, Q^3, Q^4.
-    double m_Delta2[2];      ///< t, t^2.
-    double m_xBtQ2[3];
-    double m_M[2];           ///< M, M^2.
-    double m_yBMJ[3];
-    double m_epsilonBMJ[2];
-    double m_epsroot[6];
-    double m_K[2];
-    double m_Kt[2];
-    double m_tminBMJ;
-    double m_tmaxBMJ;
-    double m_F1, m_F2;
-    double m_phaseSpaceBMJ;
-    double m_J;              ///< Numerator of lepton propagator P1.
-    double m_yeps;           ///< y (1 + eps^2).
-    double m_cF[3];          ///< cF[j][0] coefficients (j = 0,1,2).
-    double m_cBH0[3];        ///< Unpolarized BH Fourier coeffs c0,c1,c2.
-    // Zero-initialized: not every (i,k,n) slot is assigned by
-    // setupKinematicsTorch() below, but some unassigned slots (e.g. Cang[2][*][3])
-    // are genuinely read downstream -- an uninitialized double there is UB
-    // (confirmed via diagnostic: reads as subnormal garbage without this).
-    double m_Cang[3][3][4] = {};  ///< Interference angular coeffs C (i, k, n).
-    double m_Sang[3][3][4] = {};  ///< Interference angular coeffs S (i, k, n).
-
-    // ----- batched cached state (mirror of the block above, [N]-shaped) -----
+    // ----- batched cached state ----------------------------------------------
     // CFFs from the NN, batched ([N] complex double, grad-tracked)
     torch::Tensor m_CFFstdBatch[4];
     torch::Tensor m_CFFBatch[4][3];

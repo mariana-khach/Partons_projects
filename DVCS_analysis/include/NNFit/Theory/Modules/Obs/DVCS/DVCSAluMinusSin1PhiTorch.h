@@ -26,8 +26,8 @@
  * the same integrator the scalar DVCSAluMinusSin1Phi uses.
  *
  * Mirrors the scalar class hierarchy: derives from DVCSAluMinusTorch (the
- * pointwise asymmetry layer) and reuses its aLUTensor(), exactly as the scalar
- * DVCSAluMinusSin1Phi derives from DVCSAluMinus and reuses computeObservable().
+ * pointwise asymmetry layer) and reuses its aLUTensorBatch(), exactly as the
+ * scalar DVCSAluMinusSin1Phi derives from DVCSAluMinus and reuses computeObservable().
  * The pointwise scalar wrapper (computeObservable) is inherited unchanged — it
  * calls computeTensor() virtually, which resolves to the override below.
  */

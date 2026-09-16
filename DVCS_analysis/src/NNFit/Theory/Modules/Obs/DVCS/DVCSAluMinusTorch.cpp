@@ -11,10 +11,6 @@
 
 #include "NNFit/Theory/Modules/Processes/DVCS/DVCSProcessModuleTorch.h"
 
-namespace {
-const torch::TensorOptions kF64 = torch::TensorOptions().dtype(torch::kFloat64);
-} // namespace
-
 const unsigned int DVCSAluMinusTorch::classId =
         PARTONS::BaseObjectRegistry::getInstance()->registerBaseObject(
                 new DVCSAluMinusTorch("DVCSAluMinusTorch"));
@@ -44,31 +40,15 @@ DVCSProcessModuleTorch* DVCSAluMinusTorch::torchProcessModule() {
     return pProc;
 }
 
-torch::Tensor DVCSAluMinusTorch::aLUTensor(
-        const PARTONS::DVCSObservableKinematic& kinematic,
-        const torch::Tensor& phi) {
-
-    DVCSProcessModuleTorch* pProc = torchProcessModule();
-
-    // Hoist the phi-/helicity-independent setup (one NN forward + BMJ12
-    // kinematics + 72 angular coeffs) out of the per-helicity calls: prepare
-    // once, then assemble sigma for each beam helicity from the cached state.
-    pProc->prepareTensor(kinematic);
-    torch::Tensor sigmaPlus = pProc->crossSectionTensor(+1., -1., phi);
-    torch::Tensor sigmaMinus = pProc->crossSectionTensor(-1., -1., phi);
-
-    return (sigmaPlus - sigmaMinus) / (sigmaPlus + sigmaMinus);
-}
-
 torch::Tensor DVCSAluMinusTorch::aLUTensorBatch(const torch::Tensor& xB,
         const torch::Tensor& t, const torch::Tensor& Q2,
         const torch::Tensor& E, const torch::Tensor& phi) {
 
     DVCSProcessModuleTorch* pProc = torchProcessModule();
 
-    // Same hoist as aLUTensor(): prepare once (N-point kinematics + one
-    // batched NN forward), then assemble sigma for each beam helicity from
-    // the cached state.
+    // Hoist the phi-/helicity-independent setup out of the per-helicity
+    // calls: prepare once (N-point kinematics + one batched NN forward), then
+    // assemble sigma for each beam helicity from the cached state.
     pProc->prepareTensorBatch(xB, t, Q2, E);
     torch::Tensor sigmaPlus = pProc->crossSectionTensorBatch(+1., -1., phi);
     torch::Tensor sigmaMinus = pProc->crossSectionTensorBatch(-1., -1., phi);
@@ -91,11 +71,12 @@ torch::Tensor DVCSAluMinusTorch::computeTensorImplBatch(
 torch::Tensor DVCSAluMinusTorch::computeTensorImpl(
         const PARTONS::DVCSObservableKinematic& kinematic) {
 
-    // Pointwise asymmetry at the kinematic's stored phi (mirrors the scalar
-    // DVCSAluMinus::computeObservable, which evaluates at kinematic.getPhi()).
-    const double phi = kinematic.getPhi().getValue();
-    torch::Tensor phiT = torch::full({1}, phi, kF64);
-    return aLUTensor(kinematic, phiT).squeeze();
+    // Thin N=1 wrapper around computeTensorImplBatch(), mirroring
+    // DVCSAluMinusSin1PhiTorch::computeTensorImpl(). Not yet implemented at
+    // this base class -- computeTensorImplBatch() throws (see its doc comment).
+    PARTONS::List<PARTONS::DVCSObservableKinematic> list;
+    list.add(kinematic);
+    return computeTensorImplBatch(list)[0];
 }
 
 PARTONS::PhysicalType<double> DVCSAluMinusTorch::computeObservable(
