@@ -116,63 +116,8 @@ void DVCSCFFNNTorch::setupKinematicsTorch(double xi, double t, double Q2) {
 }
 
 // ---------------------------------------------------------------------------
-// NN forward (single source of truth for both scalar and tensor paths)
-// ---------------------------------------------------------------------------
-
-torch::Tensor DVCSCFFNNTorch::forwardNN() {
-
-    if (!m_net)
-        throw ElemUtils::CustomException(getClassName(), __func__,
-                "Pytorch model has not been set. Call setModel() first.");
-
-    // Build 1x3 input tensor: [xB, t, Q2]
-    // xB derived from PARTONS skewness: xB = 2*xi / (1 + xi)
-    double xB = 2.0 * m_xi / (1.0 + m_xi);
-
-    torch::Tensor input = torch::zeros({1, 3});
-    input[0][0] = static_cast<float>(xB);
-    input[0][1] = static_cast<float>(m_t);
-    input[0][2] = static_cast<float>(m_Q2);
-
-    // Apply the same per-feature min-max scaling fitted on the training set.
-    // Matches (x - xMin) / (xMax - xMin) from CFF_NN_Fitter::train_nn().
-    // Skipped if no scaling was injected (raw features).
-    if (m_xMin.defined() && m_xMax.defined()) {
-        torch::Tensor denom = (m_xMax - m_xMin).clamp_min(1e-8f);
-        input = (input - m_xMin) / denom;
-    }
-
-    m_net->eval();
-    // Network runs in float32; promote to float64 so downstream BMJ12
-    // arithmetic matches the scalar (double) pipeline.
-    torch::Tensor output = m_net->forward(input).to(torch::kFloat64);
-
-    // CFF = xB^m_xPow * NNet_output (m_xPow defaults to 0, i.e. no rescaling).
-    return output * std::pow(xB, m_xPow);
-}
-
-torch::Tensor DVCSCFFNNTorch::cffComponentTensor(const torch::Tensor& output,
-        const std::string& name) const {
-
-    const std::string reName = "Re" + name;
-    const std::string imName = "Im" + name;
-
-    int reIdx = -1, imIdx = -1;
-    for (int k = 0; k < static_cast<int>(m_outputLayer.size()); ++k) {
-        if (m_outputLayer[k] == reName) reIdx = k;
-        if (m_outputLayer[k] == imName) imIdx = k;
-    }
-
-    const torch::TensorOptions f64 = torch::TensorOptions().dtype(torch::kFloat64);
-    torch::Tensor re = (reIdx >= 0) ? output[0][reIdx] : torch::zeros({}, f64);
-    torch::Tensor im = (imIdx >= 0) ? output[0][imIdx] : torch::zeros({}, f64);
-
-    return torch::complex(re, im); // 0-d complex double, grad-tracked
-}
-
-// ---------------------------------------------------------------------------
-// Batched NN forward (single source of truth for the CFF value itself;
-// forwardNN()/computeCFFTensor()/computeAllCFFsTensor() are N=1 wrappers).
+// Batched NN forward (single source of truth for the CFF value itself, for both
+// the scalar and tensor paths; computeCFFTensor() is an N=1 wrapper).
 // ---------------------------------------------------------------------------
 
 torch::Tensor DVCSCFFNNTorch::forwardNNBatch(const torch::Tensor& xB,
@@ -182,11 +127,12 @@ torch::Tensor DVCSCFFNNTorch::forwardNNBatch(const torch::Tensor& xB,
         throw ElemUtils::CustomException(getClassName(), __func__,
                 "Pytorch model has not been set. Call setModel() first.");
 
-    // Stack [xB,t,Q2] as an [N,3] input (mirrors forwardNN()'s [1,3] build).
+    // Stack [xB,t,Q2] as an [N,3] input.
     torch::Tensor input = torch::stack({xB, t, Q2}, /*dim=*/1).to(torch::kFloat32);
 
-    // Same per-feature min-max scaling as forwardNN(). Skipped if no scaling
-    // was injected (raw features).
+    // Apply the same per-feature min-max scaling fitted on the training set.
+    // Matches (x - xMin) / (xMax - xMin) from CFF_NN_Fitter::train_nn().
+    // Skipped if no scaling was injected (raw features).
     if (m_xMin.defined() && m_xMax.defined()) {
         torch::Tensor denom = (m_xMax - m_xMin).clamp_min(1e-8f);
         input = (input - m_xMin) / denom;
@@ -254,28 +200,11 @@ torch::Tensor DVCSCFFNNTorch::computeCFFTensorBatch(PARTONS::GPDType::Type type,
 }
 
 // ---------------------------------------------------------------------------
-// Single-point CFFs -- N=1 wrappers around the batched implementation above
-// (still independently called: computeAllCFFsTensor() by the process
-// module's own single-point setup, computeCFFTensor() by computeCFF(),
-// which PARTONS' base-scalar pipeline calls directly via observ_calc()).
+// Single-point CFF -- N=1 wrapper around the batched implementation above.
+// Kept because PARTONS' base-scalar pipeline reaches it through computeCFF()
+// (one GPD type at a time), e.g. when observ_calc() drives the base
+// DVCSProcessBMJ12. The tensor chain uses the batched methods directly.
 // ---------------------------------------------------------------------------
-
-DVCSCFFNNTorch::AllCFFsTensor DVCSCFFNNTorch::computeAllCFFsTensor() {
-    // xB derived from PARTONS skewness (matches the pre-batching convention;
-    // m_xi/m_t/m_Q2 are set by setupKinematicsTorch()).
-    double xB = 2.0 * m_xi / (1.0 + m_xi);
-    torch::Tensor xBT = torch::full({1}, xB, torch::kFloat64);
-    torch::Tensor tT  = torch::full({1}, m_t, torch::kFloat64);
-    torch::Tensor Q2T = torch::full({1}, m_Q2, torch::kFloat64);
-
-    AllCFFsTensorBatch batch = computeAllCFFsTensorBatch(xBT, tT, Q2T);
-    AllCFFsTensor cffs;
-    cffs.H  = batch.H[0];
-    cffs.E  = batch.E[0];
-    cffs.Ht = batch.Ht[0];
-    cffs.Et = batch.Et[0];
-    return cffs;
-}
 
 torch::Tensor DVCSCFFNNTorch::computeCFFTensor(PARTONS::GPDType::Type type) {
     double xB = 2.0 * m_xi / (1.0 + m_xi);
