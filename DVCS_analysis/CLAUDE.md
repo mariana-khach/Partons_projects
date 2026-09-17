@@ -21,10 +21,11 @@ cd build && make Run_CFF_NN_Fit
 
 All executables are placed in `bin/`.
 
-**PARTONS must be run from the `bin/` directory** so it can locate `partons.properties` and `logger.properties`:
+**Run from the project root (`DVCS_analysis/`), not from `bin/`:**
 ```bash
-cd bin && ./Run_CFF_NN_Fit
+./bin/Run_CFF_NN_Fit
 ```
+`Partons::init` derives the properties-file directory from `argv[0]` (`Partons.cpp:81–88`), so `bin/partons.properties` is found either way — but the paths *inside* it (`log.file.path = bin/logger.properties`, `xml.schema.file.path = data/xmlSchema.xsd`) resolve against the **actual CWD**. From `bin/` they become `bin/bin/…` and the run fails on `logger.properties`. (Rediscovered 2026-06-22; this section said the opposite until 2026-09-17.)
 
 ## Dependencies
 
@@ -47,7 +48,7 @@ libtorch is bundled locally at `libtorch/` and found via `CMAKE_PREFIX_PATH`.
 
 This is the active development area. It implements a differentiable pipeline:
 
-**NN architecture** (`CFF_NN_Fit.h`): `CFFNNModel` — 3 inputs (xB, t, Q²) → 6 hidden (Tanh) → n outputs. Input features are min-max scaled (fit on training set, applied to both splits). Up to 8 CFF outputs: `{ReH, ImH, ReE, ImE, ReHt, ImHt, ReEt, ImEt}`. The NN output can be rescaled by a power of xB before being used as the CFF: `CFF = xB^m_xPow * NNet_output` (`m_xPow` defaults to 0, i.e. no rescaling), applied once inside `DVCSCFFNNTorch::forwardNN()` and threaded through every entry point via `setModel(net, outputLayer, xMin, xMax, xPow)`. See 2026-08-05 session notes.
+**NN architecture** (`CFF_NN_Fit.h`): `CFFNNModel` — 3 inputs (xB, t, Q²) → 6 hidden (Tanh) → n outputs. Input features are min-max scaled (fit on training set, applied to both splits). Up to 8 CFF outputs: `{ReH, ImH, ReE, ImE, ReHt, ImHt, ReEt, ImEt}`. The NN output can be rescaled by a power of xB before being used as the CFF: `CFF = xB^m_xPow * NNet_output` (`m_xPow` defaults to 0, i.e. no rescaling), applied once inside `DVCSCFFNNTorch::forwardNNBatch()` and threaded through every entry point via `setModel(net, outputLayer, xMin, xMax, xPow)`. See 2026-08-05 session notes (it was introduced in the since-removed single-point `forwardNN()`; the batched forward is the only one left).
 
 **`CFF_NN_Fitter`** (`CFF_NN_Fit.cpp`) — orchestrates the full workflow:
 1. `train_nn()` — trains the NN **directly on observable data** via `CustomLoss` (reduced χ²/n on A_LU^{sin1φ} computed through the differentiable `*Torch` chain, driven by `DVCSObservableServiceTorch::computeSingleKinematicTorch`). Adam, lr=1e-2 (no weight decay), early stopping (patience=1000, max 10000 epochs). Loads with `load_data_observable()`; writes `cff_learning_curve.csv`. See 2026-06-18 and 2026-09-01 session notes.
@@ -58,7 +59,7 @@ This is the active development area. It implements a differentiable pipeline:
 6. `train_replicas(n_replicas, …)` — trains a Monte Carlo replica ensemble for a CFF uncertainty band: each replica independently fits Monte-Carlo-smeared pseudodata (`y_smeared = y_obs + N(0, sigma)`), with a fresh train/val split, fresh weight init, and fresh optimizer per replica, via the shared `fit_once()` helper (also used internally by `train_nn()` for the unsmeared central fit). A replica whose validation loss diverges (NaN/Inf) or stays above a "hopeless" reduced-χ²/n threshold at a periodic checkpoint epoch is discarded and fully redrawn (fresh smear + split + init, not just weight reinit), up to a retry cap. Populates `m_replicas` (`std::vector<TrainedModel>`, each carrying its own net + min-max scaling + best val loss).
 7. `export_replicas(out_dir, name_prefix)` — writes each trained replica as `<name_prefix><NN>.json` (same format as `cff_model.json`, via a `net`/scaling-parameterized overload of `export_model_json()`), for out-of-process (Python) mean ± σ CFF bands. See 2026-09-01 session notes.
 
-**`DVCSCFFNNTorch`** (`src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.cpp`) — a PARTONS `DVCSConvolCoeffFunctionModule` that wraps `CFFNNModel`. Registered via `BaseObjectRegistry`. Receives kinematics from PARTONS as `(m_xi, m_t, m_Q2)`, converts xB = 2ξ/(1+ξ), applies the training-set min-max scaling carried in via `setModel()`, runs inference, and returns `std::complex<double>` CFF values (scalar) or grad-tracked 0-d complex tensors (`computeCFFTensor`/`computeAllCFFsTensor`).
+**`DVCSCFFNNTorch`** (`src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.cpp`) — a PARTONS `DVCSConvolCoeffFunctionModule` that wraps `CFFNNModel`. Registered via `BaseObjectRegistry`. Receives kinematics from PARTONS as `(m_xi, m_t, m_Q2)`, converts xB = 2ξ/(1+ξ), applies the training-set min-max scaling carried in via `setModel()`, runs inference, and returns `std::complex<double>` CFF values (scalar, via `computeCFF`) or grad-tracked complex tensors. The tensor side is batched: `computeAllCFFsTensorBatch(xB, t, Q2)` (all four CFFs, one NN forward, `[N]` each — what the torch chain calls) and `computeCFFTensorBatch(type, …)`; `computeCFFTensor(type)` survives as an N=1 wrapper because the scalar `computeCFF()` needs it one GPD type at a time.
 
 ### Theory submodule (`src/NNFit/Theory/`, `include/NNFit/Theory/`)
 
@@ -757,3 +758,27 @@ Verified on a 10-replica run: the file is rewritten (812 rows, every 2 epochs th
 ### Open tasks (carried forward)
 
 All 2026-09-01 items stand, plus the 2026-09-15 raw-per-φ dataset task — now the *only* thing blocking `DVCSAluMinusTorch` from being usable at all, since its placeholder is reached by both its batch and (via the N=1 wrapper) single-kinematic hooks.
+
+---
+
+## Session notes (2026-09-17)
+
+### Dead single-point CFF methods removed from `DVCSCFFNNTorch`
+
+Follow-up cleanup to `82edefd` (2026-09-16). That commit deleted the single-point tensor path in the *process* module, which left three methods in the CFF module with no callers anywhere in the repo:
+
+| Removed | Was |
+|---|---|
+| `computeAllCFFsTensor()` + the `AllCFFsTensor` struct | public; all four CFFs as 0-d tensors, an N=1 wrapper over `computeAllCFFsTensorBatch`. Its last caller was `DVCSProcessBMJ12Torch::setupKinematicsTorch`, deleted in `82edefd` |
+| `forwardNN()` | private; the `[1,3]` NN forward (scaling + `xB^m_xPow`), N=1 twin of `forwardNNBatch` |
+| `cffComponentTensor()` | private; 0-d Re/Im → complex assembly, N=1 twin of `cffComponentTensorBatch` |
+
+**What survives and why:** `computeCFFTensor(type)` — also an N=1 wrapper, but genuinely reachable: the scalar `computeCFF()` calls it one GPD type at a time, and PARTONS' base-scalar pipeline calls *that* (this is the `observ_calc()` path). It goes straight to `computeCFFTensorBatch`, so `forwardNNBatch`/`cffComponentTensorBatch` are now the only forward and the only Re/Im assembly in the class — i.e. `CFF = xB^m_xPow * NNet_output` is applied in exactly one place (`forwardNNBatch`), where the 2026-08-05 notes say `forwardNN()`.
+
+**Stale comments fixed.** The section header above `computeAllCFFsTensor` claimed it was "still independently called ... by the process module's own single-point setup" — untrue since `82edefd`. Several doc comments described themselves as the "batched sibling of" a method being removed in the same edit; they were reworded to stand alone.
+
+`make Run_CFF_NN_Fit` builds clean. Nothing reachable changed, so the three `observ_calc*` values cannot move and the run was not repeated — a full run retrains and would overwrite the current `cff_model.json` / `obs_*.csv` / replica exports.
+
+### README brought up to date (same session)
+
+`README.md` had drifted ~3 months behind. Corrected: the section claiming batching was "PLANNED, NOT YET IMPLEMENTED" (it landed 2026-09-15) and the run instruction `cd bin && ./Run_CFF_NN_Fit` (wrong — the paths *inside* `bin/partons.properties` resolve against the CWD, so it must be `./bin/Run_CFF_NN_Fit` from the project root; the **Build** section at the top of this file carried the same error and was fixed too). Added the missing 2026-08-05 / 09-01 / 09-15 / 09-16 work, refreshed the file tree, output-file table and data-format section, and added a "Current status / open items" list.
