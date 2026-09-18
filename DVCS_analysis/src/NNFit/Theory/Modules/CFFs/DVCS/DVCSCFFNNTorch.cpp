@@ -138,7 +138,12 @@ torch::Tensor DVCSCFFNNTorch::forwardNNBatch(const torch::Tensor& xB,
         input = (input - m_xMin) / denom;
     }
 
-    m_net->eval();
+    // Train/eval mode is the CALLER's to set (EvalModeGuard for an inference
+    // call, net->train() for a training step) -- this forward serves both. It
+    // used to force eval() here, which made training mode unreachable: harmless
+    // for a Linear/Tanh net, silently wrong the day a Dropout/BatchNorm layer
+    // is added.
+    //
     // Network runs in float32; promote to float64 so downstream BMJ12
     // arithmetic matches the scalar (double) pipeline.
     torch::Tensor output = m_net->forward(input).to(torch::kFloat64); // [N, Nout]
@@ -217,10 +222,16 @@ torch::Tensor DVCSCFFNNTorch::computeCFFTensor(PARTONS::GPDType::Type type) {
 
 // ---------------------------------------------------------------------------
 // computeCFF — scalar wrapper over the tensor path (no gradient)
+//
+// This is PARTONS' scalar entry point, so it establishes both inference
+// conditions itself: no autograd graph (NoGradGuard) and eval mode
+// (EvalModeGuard, restored on exit so a scalar call mid-training cannot leave
+// the shared net in the wrong mode).
 // ---------------------------------------------------------------------------
 
 std::complex<double> DVCSCFFNNTorch::computeCFF() {
     torch::NoGradGuard no_grad;
+    EvalModeGuard eval_mode(m_net);
     torch::Tensor cff = computeCFFTensor(m_currentGPDComputeType);
     return std::complex<double>(torch::real(cff).item<double>(),
             torch::imag(cff).item<double>());

@@ -222,10 +222,12 @@ CFF_NN_Fitter::FitOutcome CFF_NN_Fitter::fit_once(const torch::Tensor& X,
         loss_train.backward();
         optimizer.step();
 
-        // Validation step
+        // Validation step — inference conditions: no graph (NoGradGuard) AND
+        // eval mode (the guard restores training mode for the next epoch).
         float val_loss;
         {
             torch::NoGradGuard no_grad;
+            EvalModeGuard eval_mode(net);
             val_loss = loss_fn(valKin, y_val, s_val).item<float>();
         }
 
@@ -362,6 +364,10 @@ void CFF_NN_Fitter::predict() {
                     DVCSCFFNNTorch::classId);
     static_cast<DVCSCFFNNTorch*>(pDVCSCFF)->setModel(
             m_net, m_output_layer, m_X_min, m_X_max, m_xPow);
+
+    // Inference: eval mode for the whole evaluation below (paired with the
+    // NoGradGuard at the per-point loop).
+    EvalModeGuard eval_mode(m_net);
 
     DVCSXiConverterModule* pDVCSXiConverter =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
@@ -593,6 +599,11 @@ void CFF_NN_Fitter::observ_calc_torch() {
     static_cast<DVCSCFFNNTorch*>(pDVCSCFF)->setModel(
             m_net, m_output_layer, m_X_min, m_X_max, m_xPow);
 
+    // Inference in the Dropout/BatchNorm sense -- but deliberately NO
+    // NoGradGuard here: this path exists to show the autograd graph survives
+    // (requires_grad = true on the printed result).
+    EvalModeGuard eval_mode(m_net);
+
     DVCSXiConverterModule* pDVCSXiConverter =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
                     DVCSXiConverterXBToXi::classId);
@@ -659,6 +670,11 @@ void CFF_NN_Fitter::observ_calc_torch_scalar() {
                     DVCSCFFNNTorch::classId);
     static_cast<DVCSCFFNNTorch*>(pDVCSCFF)->setModel(
             m_net, m_output_layer, m_X_min, m_X_max, m_xPow);
+
+    // Inference: eval mode for this evaluation. The NoGradGuard lives inside
+    // the leaf's scalar virtual (computeObservable), which is what the scalar
+    // service calls here.
+    EvalModeGuard eval_mode(m_net);
 
     DVCSXiConverterModule* pDVCSXiConverter =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(

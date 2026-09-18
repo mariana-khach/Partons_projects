@@ -25,6 +25,38 @@ struct CFFNNModelImpl : torch::nn::Module {
 };
 TORCH_MODULE(CFFNNModel);
 
+// RAII: put the network in eval (inference) mode for the current scope and
+// restore whatever mode it was in on exit -- the torch::nn twin of
+// NoGradGuard, and independent of it (eval mode governs layers whose behavior
+// differs between training and inference, e.g. Dropout/BatchNorm; NoGradGuard
+// governs whether the autograd graph is built). Both are needed for a plain
+// inference call, but not always together: observ_calc_torch() wants eval mode
+// AND a live graph, so it takes this guard and no NoGradGuard.
+//
+// Restoring on exit matters because the CFFNNModel is shared by handle between
+// the fitter, CustomLoss and DVCSCFFNNTorch -- a bare eval() in an inference
+// call would otherwise leak into any training that runs afterwards.
+//
+// Today's 3 -> 6 (Tanh) -> n network has no mode-dependent layer, so this is a
+// no-op in effect; it exists so adding one later cannot silently train in
+// inference mode.
+class EvalModeGuard {
+public:
+    explicit EvalModeGuard(const CFFNNModel& net)
+        : m_net(net), m_wasTraining(net ? net->is_training() : false) {
+        if (m_net) m_net->eval();
+    }
+    ~EvalModeGuard() {
+        if (m_net) m_net->train(m_wasTraining);
+    }
+    EvalModeGuard(const EvalModeGuard&)            = delete;
+    EvalModeGuard& operator=(const EvalModeGuard&) = delete;
+
+private:
+    CFFNNModel m_net;
+    bool       m_wasTraining;
+};
+
 // Result of one fit attempt (central or replica): the trained net plus the
 // per-feature min-max scaling fit on that attempt's own training split.
 struct TrainedModel {
