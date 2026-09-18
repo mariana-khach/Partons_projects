@@ -93,9 +93,15 @@ public:
     // weights + fresh optimizer per replica). A replica whose validation loss
     // (reduced chi^2 = chi^2/n_val) is NaN/Inf, or still above hopeless_val_loss
     // at any epoch multiple of hopeless_check_epoch, is discarded and fully
-    // redrawn (not just weight-reinit), up to max_retries_per_replica times;
-    // the last attempt is kept with a warning if still hopeless after that
-    // many retries. Populates m_replicas.
+    // redrawn (not just weight-reinit), up to max_tries_per_replica times.
+    //
+    // max_tries_per_replica counts TOTAL tries, not retries after a first
+    // attempt: 30 means one initial fit plus up to 29 redraws. If all of them
+    // are hopeless the ensemble is abandoned -- the replicas accepted so far
+    // are exported (so the compute is not lost), then a std::runtime_error is
+    // thrown. A partial ensemble is not a result, so the run fails loudly
+    // rather than returning fewer replicas than asked for. Populates
+    // m_replicas.
     //
     // hopeless_val_loss is a reduced-chi^2 (chi^2/n_val) threshold, re-checked
     // every hopeless_check_epoch epochs (periodic, not a single checkpoint —
@@ -113,7 +119,7 @@ public:
     //
     // normalize_loss: forwarded to CustomLoss (true = chi^2/n, the default;
     // false = raw chi^2 sum, kept only for the A/B comparison above).
-    void train_replicas(int n_replicas = 10, int max_retries_per_replica = 5,
+    void train_replicas(int n_replicas = 10, int max_tries_per_replica = 30,
             float hopeless_val_loss = 100.f, int hopeless_check_epoch = 200,
             unsigned base_seed = 0, bool normalize_loss = true);
 
@@ -122,6 +128,14 @@ public:
     // export_model_json()'s cff_model.json for the central fit. name_prefix
     // defaults to "cff_model_replica_"; override for a distinct export set
     // (e.g. "cff_model_replica_origloss_" for the normalize_loss=false A/B run).
+    //
+    // Any pre-existing <name_prefix>*.json in out_dir is deleted first, so the
+    // directory always describes the run that just finished -- otherwise a
+    // shorter ensemble (10 replicas, then 5) or an aborted one would leave
+    // stale files that a glob in the plotting code would read as part of the
+    // current set. Nothing is deleted when there are no replicas to write, so
+    // a run that fails before its first replica leaves the previous ensemble
+    // intact.
     void export_replicas(const std::string& out_dir,
             const std::string& name_prefix = "cff_model_replica_") const;
 

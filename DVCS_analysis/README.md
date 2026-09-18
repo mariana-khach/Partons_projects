@@ -590,9 +590,11 @@ FitOutcome fit_once(X, E, phi, y_obs, sigma, bool smear,
   identical seed reproduces byte-identical starting conditions.
 
 **`train_replicas(n_replicas, …)`** loops replicas, retrying each `fit_once` attempt up to
-`max_retries_per_replica` times and **fully redrawing** on a hopeless attempt (fresh smear +
-fresh split + fresh weights, not just a weight reinit); if still hopeless after the retries the
-last attempt is kept with a warning, so a run always produces exactly `n_replicas` models.
+`max_tries_per_replica` times and **fully redrawing** on a hopeless attempt (fresh smear +
+fresh split + fresh weights, not just a weight reinit).  *(Updated 2026-09-18: 30 tries by
+default, and if every try is hopeless the run exports the replicas accepted so far and then
+throws — see "Replica retries" below.  Until then, the last hopeless attempt was kept with a
+warning so a run always produced exactly `n_replicas` models.)*
 `base_seed = 0` (default) draws every attempt's seed from `std::random_device` (production
 mode); a nonzero `base_seed` makes the whole ensemble deterministic for A/B comparisons.
 Only the **last** replica writes a learning curve (`cff_learning_curve_last_replica.csv`), as
@@ -700,6 +702,32 @@ point in the unpolarized sector.
 
 ---
 
+### Replica retries and ensemble integrity (2026-09-18)
+
+Two changes to what happens when a replica cannot be fit.
+
+**`max_retries_per_replica` → `max_tries_per_replica`, default 5 → 30.**  The loop always counted
+*total* tries, so the old name promised one more attempt than the code gave; 30 means one initial
+fit plus up to 29 redraws.
+
+**On exhaustion the run now fails instead of padding the ensemble.**  Previously the last hopeless
+attempt was kept with a warning, so a run always produced exactly `n_replicas` models — one of
+which could be junk, silently widening the uncertainty band.  Now `train_replicas` exports the
+replicas accepted so far (that compute is worth keeping) and then throws a `std::runtime_error`
+naming the replica, the try count and how many were exported.
+
+**`export_replicas` deletes the previous `<prefix>*.json` before writing** — unless there is
+nothing to write, in which case the earlier ensemble is left alone.  Without this, a 10-replica run
+followed by a 5-replica run left `_05`…`_09` on disk and a `glob` in the plotting notebook read ten
+replicas, five of them from a different fit.
+
+For reference, Gepard's `fitter_vectloss.py` takes neither route: `fit()` retries with **no cap**
+(`while test_err < 0`), so exhaustion cannot occur; `fitgood()` caps tries **globally** across the
+ensemble and, when the budget runs out, simply `break`s and returns fewer nets with no error.  Both
+discard the failed net and keep the successes, as here — only the ending differs.
+
+---
+
 ## Current status / open items
 
 - **Raw per-φ A_LU leaf** — `DVCSAluMinusTorch::computeTensorImplBatch` is a throwing
@@ -715,7 +743,9 @@ point in the unpolarized sector.
 - **`x_pow` is a manual constant** — not fit or selected automatically, and no systematic
   comparison of values has been recorded.
 - **Replica hyperparameters untuned** — `hopeless_val_loss = 100`, `hopeless_check_epoch = 200`,
-  `max_retries_per_replica = 5` are initial defaults.  An observed 10-replica run showed
+  `max_tries_per_replica = 30` are initial defaults.  Note the threshold is only *checked* at
+  epoch multiples of 200, by which point a healthy fit sits near χ²/n ≈ 5 — so 100 catches a
+  stuck or diverged fit, not a merely poor one.  An observed 10-replica run showed
   pronounced overfitting well before early stopping fired (train χ²/n → 0.62 while val climbed
   to 8.28, best val around epoch ~620 with `patience = 1000` then running ~1000 epochs uphill),
   so the replica band is likely wider than the data alone justifies.  Untested hypothesis,
@@ -727,6 +757,11 @@ point in the unpolarized sector.
   `Run_CFF_NN_Fit.cpp`.  Both must be updated on an environment move.
 - **`predict()` still loops per point** (`computeSingleKinematicTorch`) while training uses the
   batched driver.  Harmless — it runs once per fit, not per epoch.
+- **A failed run still exits 0** — `main()` catches, logs through PARTONS' logger and falls
+  through to `return 0`, so SWIF/Slurm marks the job succeeded and `./bin/Run_CFF_NN_Fit && …`
+  continues onto an incomplete ensemble.  The `.out` file does end with the
+  `[ERROR] (main::main) Replica N still hopeless …` line, so a human reading the log sees it.
+  Fix: an `int exit_code` set in both catch blocks and returned at the end.
 - **Cross-path verification is one kinematic point** — spot-checking a few points spanning the
   dataset's range would be cheap insurance against a silent desync between the native and torch
   BMJ12 transcriptions.

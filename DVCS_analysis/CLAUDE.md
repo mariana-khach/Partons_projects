@@ -56,8 +56,8 @@ This is the active development area. It implements a differentiable pipeline:
 3. `observ_calc()` — base-PARTONS scalar reference: `DVCSCFFNNTorch` + base `DVCSProcessBMJ12` + base `DVCSAluMinusSin1Phi` via `DVCSObservableService`.
 4. `observ_calc_torch()` — same observable through the PARTONS-tensor chain via `DVCSObservableServiceTorch::computeSingleKinematicTorch` → `computeTensor()`, inside the libtorch autograd graph.
 5. `observ_calc_torch_scalar()` — the `*Torch` subclasses driven through the standard `DVCSObservableService`; the inherited scalar virtuals wrap the tensor methods under `NoGradGuard`+`.item()` (verification path — same torch physics, gradient dropped).
-6. `train_replicas(n_replicas, …)` — trains a Monte Carlo replica ensemble for a CFF uncertainty band: each replica independently fits Monte-Carlo-smeared pseudodata (`y_smeared = y_obs + N(0, sigma)`), with a fresh train/val split, fresh weight init, and fresh optimizer per replica, via the shared `fit_once()` helper (also used internally by `train_nn()` for the unsmeared central fit). A replica whose validation loss diverges (NaN/Inf) or stays above a "hopeless" reduced-χ²/n threshold at a periodic checkpoint epoch is discarded and fully redrawn (fresh smear + split + init, not just weight reinit), up to a retry cap. Populates `m_replicas` (`std::vector<TrainedModel>`, each carrying its own net + min-max scaling + best val loss).
-7. `export_replicas(out_dir, name_prefix)` — writes each trained replica as `<name_prefix><NN>.json` (same format as `cff_model.json`, via a `net`/scaling-parameterized overload of `export_model_json()`), for out-of-process (Python) mean ± σ CFF bands. See 2026-09-01 session notes.
+6. `train_replicas(n_replicas, …)` — trains a Monte Carlo replica ensemble for a CFF uncertainty band: each replica independently fits Monte-Carlo-smeared pseudodata (`y_smeared = y_obs + N(0, sigma)`), with a fresh train/val split, fresh weight init, and fresh optimizer per replica, via the shared `fit_once()` helper (also used internally by `train_nn()` for the unsmeared central fit). A replica whose validation loss diverges (NaN/Inf) or stays above a "hopeless" reduced-χ²/n threshold at a periodic checkpoint epoch is discarded and fully redrawn (fresh smear + split + init, not just weight reinit), up to `max_tries_per_replica` **total tries** (default 30 — one initial fit plus up to 29 redraws). If every try is hopeless the ensemble is abandoned: the replicas accepted so far are exported (that compute is not lost), then a `std::runtime_error` is thrown naming the replica, the try count and how many were exported. A short ensemble returned silently would be read downstream as a complete one, so the run fails loudly instead. Populates `m_replicas` (`std::vector<TrainedModel>`, each carrying its own net + min-max scaling + best val loss).
+7. `export_replicas(out_dir, name_prefix)` — writes each trained replica as `<name_prefix><NN>.json` (same format as `cff_model.json`, via a `net`/scaling-parameterized overload of `export_model_json()`), for out-of-process (Python) mean ± σ CFF bands. **Deletes any pre-existing `<name_prefix>*.json` in `out_dir` first**, so the directory always describes the run that just finished — otherwise a shorter ensemble (10 replicas, then 5) or an aborted one leaves stale files that a `glob` in the plotting code reads as part of the current set. Nothing is deleted when there is nothing to write, so a run that fails before its first replica leaves the previous ensemble intact. See 2026-09-01 and 2026-09-18 session notes.
 
 **`DVCSCFFNNTorch`** (`src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.cpp`) — a PARTONS `DVCSConvolCoeffFunctionModule` that wraps `CFFNNModel`. Registered via `BaseObjectRegistry`. Receives kinematics from PARTONS as `(m_xi, m_t, m_Q2)`, converts xB = 2ξ/(1+ξ), applies the training-set min-max scaling carried in via `setModel()`, runs inference, and returns `std::complex<double>` CFF values (scalar, via `computeCFF`) or grad-tracked complex tensors. The tensor side is batched: `computeAllCFFsTensorBatch(xB, t, Q2)` (all four CFFs, one NN forward, `[N]` each — what the torch chain calls) and `computeCFFTensorBatch(type, …)`; `computeCFFTensor(type)` survives as an N=1 wrapper because the scalar `computeCFF()` needs it one GPD type at a time.
 
@@ -146,7 +146,7 @@ Data path and output paths are hardcoded absolute paths in `src/Run_CFF_NN_Fit.c
 | `obs_prediction.csv` | `xB,t,Q2,E,phi,obs_true,obs_pred,error` per point | `predict()` |
 | `obs_model_eval.csv` | `observable,mse,r_squared,chi2` (chi2 = reduced χ²/n) | `predict()` |
 | `cff_model.json` | trained NN export — `arch`, `dtype`, `best_val_chi2`, `input_features`, `x_pow`, `output_layer` (= `m_output_layer`), min-max `scaling`, and `fc1`/`fc2` weights+biases. Lets the exact NN forward be reproduced out-of-process (CFF scans/plots in `CFF_obs_train_predict_plot.ipynb`) | `predict()` (`export_model_json`) |
-| `cff_model_replica_<NN>.json` | same format as `cff_model.json`, one per trained replica (`<NN>` = zero-padded replica index) — for Python mean ± σ CFF bands | `export_replicas()` |
+| `cff_model_replica_<NN>.json` | same format as `cff_model.json`, one per trained replica (`<NN>` = zero-padded replica index) — for Python mean ± σ CFF bands. The whole set is deleted and rewritten on each export, so the directory never mixes runs | `export_replicas()` |
 
 ## PARTONS runtime configuration
 
@@ -692,7 +692,7 @@ Built clean; ran `Run_CFF_NN_Fit` end-to-end. Training loss reads as a reduced �
 ### Known limitations / open tasks
 
 - `x_pow` (2026-08-05) is still a manually-set constant, not fit or selected automatically.
-- `hopeless_val_loss = 100.f` / `hopeless_check_epoch = 200` / `max_retries_per_replica = 5` are initial defaults, not yet tuned against the actual observed replica-loss distribution on the 16-point dataset.
+- `hopeless_val_loss = 100.f` / `hopeless_check_epoch = 200` / `max_retries_per_replica = 5` are initial defaults, not yet tuned against the actual observed replica-loss distribution on the 16-point dataset. *(The retry parameter was renamed `max_tries_per_replica` and its default raised to 30 on 2026-09-18, along with the exhaustion policy — see that session's notes. The threshold values still stand as written.)*
 - Per-replica `fit_once` calls are still sequential (no threading); `n_replicas × (1+retries)` full training runs is the dominant cost noted in "Run_CFF_NN_Fit.cpp wiring" above — a candidate for a future speedup pass (independent per-replica RNG/graphs make this an easier parallelization target than the earlier #4 per-point-threading idea, since there's no shared-gradient race: each replica has its own `net`/optimizer end-to-end).
 - `CFF_plots_ALU_2007_xpow_replica_Farm.ipynb` (untracked, in `My_Analysis/Codes/`) appears to be in-progress replica-band plotting work, not yet committed.
 - **(2026-09-15) A future dataset is planned that trains on raw per-phi A_LU directly**, rather than the sin1φ Fourier moment used everywhere today (`DVCSAluMinusSin1PhiTorch`). When that work starts, `DVCSAluMinusTorch::computeTensorImplBatch(List<K>)` (branch `vect_optionA`) needs a real implementation instead of its current throwing placeholder — it needs each of the N kinematics paired with its *own* phi (an `[N]` own-phi broadcast), whereas the existing `aLUTensorBatch`/`crossSectionTensorBatch` machinery broadcasts phi as an `[M]` axis *shared* across all N points (an `[N,M]` outer product, correct for Gauss-Legendre quadrature over the sin1φ moment but not for pointwise data). Plug the new method into the same `...Batch`-suffixed chain (`aLUTensorBatch` → `prepareTensorBatch`/`crossSectionTensorBatch` → `setupKinematicsTorchBatch` → `computeAllCFFsTensorBatch`) that `DVCSAluMinusSin1PhiTorch::computeTensorImplBatch` already uses for the moment case.
@@ -782,3 +782,50 @@ Follow-up cleanup to `82edefd` (2026-09-16). That commit deleted the single-poin
 ### README brought up to date (same session)
 
 `README.md` had drifted ~3 months behind. Corrected: the section claiming batching was "PLANNED, NOT YET IMPLEMENTED" (it landed 2026-09-15) and the run instruction `cd bin && ./Run_CFF_NN_Fit` (wrong — the paths *inside* `bin/partons.properties` resolve against the CWD, so it must be `./bin/Run_CFF_NN_Fit` from the project root; the **Build** section at the top of this file carried the same error and was fixed too). Added the missing 2026-08-05 / 09-01 / 09-15 / 09-16 work, refreshed the file tree, output-file table and data-format section, and added a "Current status / open items" list.
+
+---
+
+## Session notes (2026-09-18)
+
+### Train/eval mode is the caller's, not the forward's
+
+`DVCSCFFNNTorch::forwardNNBatch` called `m_net->eval()` unconditionally — a leftover from when the class was inference-only. Every path through the NN forward therefore ran in eval mode, including the training step, so `fit_once`'s `net->train()` was undone before it could take effect. No effect today (`Linear`/`tanh` ignore the flag), but adding a `Dropout` or `BatchNorm` layer would have made training silently run in inference mode.
+
+Removed that `eval()`; each caller now declares its own mode via **`EvalModeGuard`** (new, in `CFF_NN_Fit.h`): RAII, sets eval on construction and restores the previous mode on scope exit. The restore matters because the `CFFNNModel` is shared **by handle** between the fitter, `CustomLoss` and `DVCSCFFNNTorch` — a bare `eval()` in an inference call would otherwise leak into training that runs afterwards.
+
+Eval mode and gradient tracking are **independent**, and all four combinations occur here:
+
+| Entry point | eval mode | NoGradGuard |
+|---|---|---|
+| training step | no (`train()`) | no |
+| validation step | yes | yes |
+| `predict()` | yes | yes |
+| `observ_calc_torch()` | yes | **no** — the point of this path is `requires_grad = true` |
+| `observ_calc_torch_scalar()` | yes | yes (inside the leaf's scalar virtual) |
+| `observ_calc()` | both, set inside `computeCFF()` |
+
+Verified by a full run: the three cross-path values agree (`observ_calc` = 0.145646, `observ_calc_torch` = `observ_calc_torch_scalar` = 0.145647, tensor path keeps `requires_grad = true`), central fit R² = 0.65, χ²/n = 0.47, all 10 replicas trained. Commit `4253568`.
+
+### Replica retries: 30 tries, then fail loudly
+
+`max_retries_per_replica = 5` → **`max_tries_per_replica = 30`**. The rename fixes a real ambiguity: the loop always counted *total tries*, so the old name promised one more attempt than the code gave.
+
+The bigger change is the exhaustion policy. Before: keep the last hopeless attempt with a warning, so a run always produced exactly `n_replicas` models — one of which could be junk, silently widening the band. Now: **export the replicas accepted so far, then throw** `std::runtime_error`. Rationale: a partial ensemble is not a result, but the compute already spent is worth keeping.
+
+For comparison, Gepard (`fitter_vectloss.py`) has two policies and neither matches: `fit()` retries with **no cap** (`while test_err < 0`) so exhaustion cannot happen; `fitgood()` caps tries **globally** across the ensemble and on exhaustion just `break`s, returning fewer nets than requested with no error. Both discard the failed net and keep the successes — the same as here; only the ending differs.
+
+**`export_replicas` now deletes the previous `<prefix>*.json` before writing** (unless there is nothing to write). Without it, a 10-replica run followed by a 5-replica run left `_05`…`_09` on disk, and a `glob` in the plotting notebook would read 10 replicas of which 5 were from a different fit. This was the concrete hazard that motivated exporting-then-throwing rather than writing to a distinct prefix.
+
+**Verified on three real runs** (temporary `train_replicas(...)` args in `Run_CFF_NN_Fit.cpp`, reverted after):
+
+| Scenario | Result |
+|---|---|
+| all tries fail at replica 0 (`10, 2, 0.5f, 2`) | `No replicas to export; leaving … untouched` → throw; the previous 10 JSONs survived |
+| shorter ensemble succeeds (`4, 2, 6.0f, 200`) | `Removed 10 …` → `Exported 4`; directory holds 4, not 10 |
+| mid-ensemble failure (`6, 2, 4.5f, 200`) | replicas 0–2 accepted, replica 3 exhausted → `Removed 4` → `Exported 3` → throw naming replica 3 |
+
+### Open task: the process still exits 0 on failure
+
+`main()` catches the exception, logs it through PARTONS' logger and falls through to `return 0`, so a failed run reports success to the shell — SWIF/Slurm marks the job succeeded, and `./bin/Run_CFF_NN_Fit && …` continues onto an incomplete ensemble. The farm `.out` file does end with the `[ERROR] (main::main) Replica N still hopeless …` line (two lines above `Total run time`), so a human reading the log sees it; automation does not.
+
+Fix when convenient: an `int exit_code` set to 1 in both catch blocks and returned at the end — keeping the timing print, and incidentally removing the double `pPartons->close()` that the error path currently performs (once in the catch, once after the try/catch).

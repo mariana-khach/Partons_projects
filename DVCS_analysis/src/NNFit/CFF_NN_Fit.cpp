@@ -32,7 +32,9 @@
 #include <numeric>
 #include <random>
 #include <sstream>
+#include <filesystem>
 #include <stdexcept>
+#include <system_error>
 
 
 const std::string CFF_NN_Fitter::OUT_DIR =
@@ -297,7 +299,7 @@ void CFF_NN_Fitter::train_nn() {
     m_best_val_loss  = outcome.model.best_val_loss;
 }
 
-void CFF_NN_Fitter::train_replicas(int n_replicas, int max_retries_per_replica,
+void CFF_NN_Fitter::train_replicas(int n_replicas, int max_tries_per_replica,
         float hopeless_val_loss, int hopeless_check_epoch,
         unsigned base_seed, bool normalize_loss) {
 
@@ -320,7 +322,7 @@ void CFF_NN_Fitter::train_replicas(int n_replicas, int max_retries_per_replica,
 
         FitOutcome outcome{TrainedModel{}, true};
         int attempt = 0;
-        for (; attempt < max_retries_per_replica; ++attempt) {
+        for (; attempt < max_tries_per_replica; ++attempt) {
             unsigned seed = (base_seed == 0)
                     ? std::random_device{}()
                     : base_seed + static_cast<unsigned>(r) * 100u
@@ -329,18 +331,26 @@ void CFF_NN_Fitter::train_replicas(int n_replicas, int max_retries_per_replica,
                     curve_path, hopeless_val_loss, hopeless_check_epoch,
                     seed, normalize_loss);
             if (!outcome.hopeless) break;
-            std::cout << "Replica " << r << " attempt " << attempt
+            std::cout << "Replica " << r << " try " << (attempt + 1) << "/"
+                      << max_tries_per_replica
                       << " was hopeless, redrawing (fresh smear + split + weights)...\n";
         }
 
+        // Every try hopeless: the ensemble cannot be completed. Export what was
+        // accepted so far (that compute is still good), then fail -- a short
+        // ensemble returned silently would be read downstream as a full one.
         if (outcome.hopeless) {
-            std::cout << "WARNING: replica " << r << " still hopeless after "
-                      << max_retries_per_replica
-                      << " attempts; keeping the last attempt anyway.\n";
-        } else {
-            std::cout << "Replica " << r << " accepted | best val loss: "
-                      << outcome.model.best_val_loss << " (attempt " << attempt << ")\n";
+            export_replicas(OUT_DIR);
+            throw std::runtime_error("Replica " + std::to_string(r)
+                    + " still hopeless after " + std::to_string(max_tries_per_replica)
+                    + " tries. Exported the " + std::to_string(m_replicas.size())
+                    + " replica(s) accepted before it; aborting (asked for "
+                    + std::to_string(n_replicas) + ").");
         }
+
+        std::cout << "Replica " << r << " accepted | best val loss: "
+                  << outcome.model.best_val_loss << " (try " << (attempt + 1) << "/"
+                  << max_tries_per_replica << ")\n";
 
         m_replicas.push_back(outcome.model);
     }
@@ -518,6 +528,34 @@ void CFF_NN_Fitter::export_model_json(const std::string& path,
 
 void CFF_NN_Fitter::export_replicas(const std::string& out_dir,
         const std::string& name_prefix) const {
+
+    if (m_replicas.empty()) {
+        // Nothing to write, so nothing is cleaned: a run that fails before its
+        // first replica leaves the previous ensemble on disk rather than
+        // destroying it.
+        std::cout << "No replicas to export; leaving " << out_dir << " untouched\n";
+        return;
+    }
+
+    // Drop the previous ensemble first, so out_dir describes THIS run. Without
+    // it, a shorter run (10 replicas, then 5) or an aborted one would leave
+    // stale <prefix>NN.json files that a glob in the plotting code reads as
+    // part of the current set.
+    int removed = 0;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(out_dir, ec)) {
+        if (!entry.is_regular_file()) continue;
+        const std::string fn = entry.path().filename().string();
+        if (fn.rfind(name_prefix, 0) == 0 && entry.path().extension() == ".json") {
+            if (std::filesystem::remove(entry.path(), ec)) ++removed;
+        }
+    }
+    if (ec)
+        std::cout << "Warning: could not fully clean previous "
+                  << name_prefix << "*.json in " << out_dir << " (" << ec.message() << ")\n";
+    if (removed > 0)
+        std::cout << "Removed " << removed << " " << name_prefix
+                  << "*.json from the previous run\n";
 
     for (size_t r = 0; r < m_replicas.size(); ++r) {
         std::ostringstream name;
