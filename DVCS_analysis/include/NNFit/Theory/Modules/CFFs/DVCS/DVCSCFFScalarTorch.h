@@ -5,9 +5,11 @@
 #ifndef DVCS_CFF_SCALAR_TORCH_H
 #define DVCS_CFF_SCALAR_TORCH_H
 
+#include <partons/beans/automation/BaseObjectData.h>
 #include <partons/modules/convol_coeff_function/DVCS/DVCSConvolCoeffFunctionModule.h>
-#include <partons/modules/scales/DVCS/DVCSScalesModule.h>
-#include <partons/modules/xi_converter/DVCS/DVCSXiConverterModule.h>
+
+#include <map>
+#include <string>
 
 #include "NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFModuleTorch.h"
 
@@ -27,56 +29,75 @@
  * Purpose: a differential test of the batched BMJ12 port. Feeding the SAME
  * scalar CFF model to PARTONS' native process module and to
  * DVCSProcessBMJ12Torch compares two independent transcriptions of BMJ12 over
- * as many kinematic points as you like. The standing observ_calc_torch_scalar
- * check does this at a single point with the network on both sides; this lifts
- * that to a whole dataset with a known, fixed CFF input, so a coefficient error
- * that only shows at large |t| or small xB has somewhere to show up.
+ * as many kinematic points as you like. The observ_calc_torch_scalar check
+ * runs the network on both sides and cannot isolate the process layer.
  *
- * Kinematics are built exactly as PARTONS' scalar path builds them
- * (DVCSProcessModule::computeConvolCoeffFunction): xi from the xi-converter
- * module, muF2/muR2 from the scales module, both evaluated on the full
- * DVCSObservableKinematic -- the same module instances the process module is
- * wired with, so the adapter cannot drift from the scalar path's conventions.
+ * Dual base, exactly like DVCSCFFNNTorch: a PARTONS module for identity,
+ * registration and the scalar contract, plus the torch mixin for the tensor
+ * interface. That is what lets it be wired the ordinary way --
+ * setConvolCoeffFunctionModule(), then found by the same cross-cast every CFF
+ * source goes through -- rather than needing an injection path of its own. The
+ * torch chain mirrors the scalar chain, so a second way to attach a CFF module
+ * would be a deviation, not a convenience.
  *
- * Wiring: this is NOT a PARTONS module (no classId, no registration, not
- * created through the module factory), so it cannot be passed to
- * setConvolCoeffFunctionModule(). Hand it to the process module with
- * DVCSProcessModuleTorch::setCFFModuleTorch() instead, which takes precedence
- * over the wired convol-coeff module for the tensor path. All three pointers
- * it holds are non-owning; the caller outlives the adapter.
+ * The wrapped model is set with setScalarModule() after construction, because
+ * PARTONS modules are created by the factory from a registered prototype and
+ * cannot take constructor arguments. Non-owning: the caller creates the
+ * wrapped module through the factory and outlives this one.
  */
-class DVCSCFFScalarTorch : public DVCSCFFModuleTorch {
+class DVCSCFFScalarTorch : public PARTONS::DVCSConvolCoeffFunctionModule,
+        public DVCSCFFModuleTorch {
 
 public:
 
+    static const unsigned int classId; ///< Unique ID for automatic registry.
+
     /**
-     * @param pScalarCFF   The scalar CFF model to evaluate (non-owning).
-     * @param pXiConverter xB -> xi module, normally the same instance the
-     *                     process module is wired with (non-owning).
-     * @param pScales      muF2/muR2 module, likewise (non-owning).
+     * Constructor.
+     * @param className Name of last child class.
      */
-    DVCSCFFScalarTorch(PARTONS::DVCSConvolCoeffFunctionModule* pScalarCFF,
-            PARTONS::DVCSXiConverterModule* pXiConverter,
-            PARTONS::DVCSScalesModule* pScales);
+    DVCSCFFScalarTorch(const std::string& className);
 
-    virtual ~DVCSCFFScalarTorch() = default;
+    virtual ~DVCSCFFScalarTorch();
+
+    virtual DVCSCFFScalarTorch* clone() const;
 
     /**
-     * Evaluates the scalar model once per point (N calls, each returning all
+     * The scalar CFF model to evaluate. Must be set before use; non-owning.
+     */
+    void setScalarModule(PARTONS::DVCSConvolCoeffFunctionModule* pScalarCFF);
+
+    /**
+     * Scalar contract: delegate to the wrapped model at this module's current
+     * kinematics, so the object behaves like the model it wraps if PARTONS'
+     * ordinary pipeline drives it.
+     */
+    virtual std::complex<double> computeCFF();
+
+    /**
+     * Evaluates the wrapped model once per point (N calls, each returning all
      * four CFFs) and stacks the results. Components the model does not provide
      * come back zero, matching the network's behavior for CFFs outside its
      * output layer.
+     * @param xi,t,Q2,muF2,muR2 [N] CCF kinematics, as handed down by the
+     *        process module (see DVCSCFFModuleTorch).
      * @return four [N] complex float64 tensors, requires_grad = false.
      */
-    AllCFFsTensorBatch computeAllCFFsTensorBatch(const torch::Tensor& xB,
+    AllCFFsTensorBatch computeAllCFFsTensorBatch(const torch::Tensor& xi,
             const torch::Tensor& t, const torch::Tensor& Q2,
-            const torch::Tensor& E) override;
+            const torch::Tensor& muF2, const torch::Tensor& muR2) override;
+
+protected:
+
+    /**
+     * Copy constructor.
+     * @param other Object to be copied.
+     */
+    DVCSCFFScalarTorch(const DVCSCFFScalarTorch& other);
 
 private:
 
-    PARTONS::DVCSConvolCoeffFunctionModule* m_pScalarCFF;
-    PARTONS::DVCSXiConverterModule*         m_pXiConverter;
-    PARTONS::DVCSScalesModule*              m_pScales;
+    PARTONS::DVCSConvolCoeffFunctionModule* m_pScalarCFF; ///< Wrapped model (non-owning).
 };
 
 #endif /* DVCS_CFF_SCALAR_TORCH_H */

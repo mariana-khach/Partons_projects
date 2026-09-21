@@ -5,15 +5,13 @@
 #include "NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFScalarTorch.h"
 
 #include <ElementaryUtils/logger/CustomException.h>
+#include <partons/BaseObjectRegistry.h>
 #include <partons/beans/convol_coeff_function/DVCS/DVCSConvolCoeffFunctionKinematic.h>
 #include <partons/beans/convol_coeff_function/DVCS/DVCSConvolCoeffFunctionResult.h>
 #include <partons/beans/gpd/GPDType.h>
 #include <partons/beans/List.h>
-#include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
-#include <partons/beans/Scales.h>
 
 #include <complex>
-#include <map>
 #include <vector>
 
 namespace {
@@ -24,25 +22,88 @@ const PARTONS::GPDType::Type kTypes[4] = { PARTONS::GPDType::H,
 
 } // namespace
 
-DVCSCFFScalarTorch::DVCSCFFScalarTorch(
-        PARTONS::DVCSConvolCoeffFunctionModule* pScalarCFF,
-        PARTONS::DVCSXiConverterModule* pXiConverter,
-        PARTONS::DVCSScalesModule* pScales)
-        : m_pScalarCFF(pScalarCFF), m_pXiConverter(pXiConverter),
-          m_pScales(pScales) {
+// ---------------------------------------------------------------------------
+// Registration
+// ---------------------------------------------------------------------------
 
-    if (!m_pScalarCFF || !m_pXiConverter || !m_pScales) {
-        throw ElemUtils::CustomException("DVCSCFFScalarTorch", __func__,
-                "Needs a scalar CFF module, an xi converter and a scales module.");
+const unsigned int DVCSCFFScalarTorch::classId =
+        PARTONS::BaseObjectRegistry::getInstance()->registerBaseObject(
+                new DVCSCFFScalarTorch("DVCSCFFScalarTorch"));
+
+// ---------------------------------------------------------------------------
+// Constructor / destructor
+// ---------------------------------------------------------------------------
+
+DVCSCFFScalarTorch::DVCSCFFScalarTorch(const std::string& className)
+        : DVCSConvolCoeffFunctionModule(className), m_pScalarCFF(0) {
+
+    // The wrapped model owns any GPD dependence; this one adds none.
+    setIsGPDModuleDependent(false);
+
+    for (int k = 0; k < 4; ++k) {
+        m_listOfCFFComputeFunctionAvailable.insert(
+                std::make_pair(kTypes[k],
+                        &PARTONS::DVCSConvolCoeffFunctionModule::computeCFF));
     }
 }
 
-DVCSCFFScalarTorch::AllCFFsTensorBatch
-DVCSCFFScalarTorch::computeAllCFFsTensorBatch(const torch::Tensor& xB,
-        const torch::Tensor& t, const torch::Tensor& Q2,
-        const torch::Tensor& E) {
+DVCSCFFScalarTorch::DVCSCFFScalarTorch(const DVCSCFFScalarTorch& other)
+        : DVCSConvolCoeffFunctionModule(other), m_pScalarCFF(other.m_pScalarCFF) {
+}
 
-    const int64_t N = xB.size(0);
+DVCSCFFScalarTorch::~DVCSCFFScalarTorch() {
+}
+
+DVCSCFFScalarTorch* DVCSCFFScalarTorch::clone() const {
+    return new DVCSCFFScalarTorch(*this);
+}
+
+void DVCSCFFScalarTorch::setScalarModule(
+        PARTONS::DVCSConvolCoeffFunctionModule* pScalarCFF) {
+    m_pScalarCFF = pScalarCFF;
+}
+
+// ---------------------------------------------------------------------------
+// Scalar contract: behave like the model we wrap
+// ---------------------------------------------------------------------------
+
+std::complex<double> DVCSCFFScalarTorch::computeCFF() {
+
+    if (!m_pScalarCFF)
+        throw ElemUtils::CustomException(getClassName(), __func__,
+                "No scalar CFF module set. Call setScalarModule() first.");
+
+    PARTONS::DVCSConvolCoeffFunctionKinematic ccfKin(m_xi, m_t, m_Q2, m_MuF2,
+            m_MuR2);
+
+    PARTONS::List<PARTONS::GPDType> gpdTypes;
+    gpdTypes.add(PARTONS::GPDType(m_currentGPDComputeType));
+
+    PARTONS::DVCSConvolCoeffFunctionResult result = m_pScalarCFF->compute(
+            ccfKin, gpdTypes);
+
+    const std::map<PARTONS::GPDType::Type, std::complex<double> >& values =
+            result.getResultsByGpdType();
+    std::map<PARTONS::GPDType::Type, std::complex<double> >::const_iterator it =
+            values.find(m_currentGPDComputeType);
+
+    return (it != values.end()) ? it->second : std::complex<double>(0., 0.);
+}
+
+// ---------------------------------------------------------------------------
+// Tensor contract: the wrapped model, evaluated over the batch
+// ---------------------------------------------------------------------------
+
+DVCSCFFScalarTorch::AllCFFsTensorBatch
+DVCSCFFScalarTorch::computeAllCFFsTensorBatch(const torch::Tensor& xi,
+        const torch::Tensor& t, const torch::Tensor& Q2,
+        const torch::Tensor& muF2, const torch::Tensor& muR2) {
+
+    if (!m_pScalarCFF)
+        throw ElemUtils::CustomException(getClassName(), __func__,
+                "No scalar CFF module set. Call setScalarModule() first.");
+
+    const int64_t N = xi.size(0);
 
     // [4][N] real and imaginary parts, in kTypes order.
     std::vector<std::vector<double> > re(4, std::vector<double>(N, 0.));
@@ -54,22 +115,15 @@ DVCSCFFScalarTorch::computeAllCFFsTensorBatch(const torch::Tensor& xB,
 
     for (int64_t i = 0; i < N; ++i) {
 
-        // Same construction as DVCSProcessModule::computeConvolCoeffFunction:
-        // xi from the converter, muF2/muR2 from the scales module, both fed the
-        // full observable kinematics. phi is irrelevant here (neither module
-        // reads it) but the bean requires a value.
-        PARTONS::DVCSObservableKinematic kin(xB[i].item<double>(),
-                t[i].item<double>(), Q2[i].item<double>(), E[i].item<double>(),
-                0.);
+        // The kinematics arrive already converted -- the process module ran the
+        // xi-converter and the scales module, as it does on the scalar path --
+        // so there is nothing to do here but build the bean.
+        PARTONS::DVCSConvolCoeffFunctionKinematic ccfKin(xi[i].item<double>(),
+                t[i].item<double>(), Q2[i].item<double>(),
+                muF2[i].item<double>(), muR2[i].item<double>());
 
-        PARTONS::Scales scale = m_pScales->compute(kin);
-        PARTONS::PhysicalType<double> xi = m_pXiConverter->compute(kin);
-
-        PARTONS::DVCSConvolCoeffFunctionKinematic ccfKin(xi, kin.getT(),
-                kin.getQ2(), scale.getMuF2(), scale.getMuR2());
-
-        PARTONS::DVCSConvolCoeffFunctionResult result =
-                m_pScalarCFF->compute(ccfKin, gpdTypes);
+        PARTONS::DVCSConvolCoeffFunctionResult result = m_pScalarCFF->compute(
+                ccfKin, gpdTypes);
 
         // Read through the map rather than getResult(): a model that does not
         // provide a given CFF leaves it at zero instead of throwing, matching

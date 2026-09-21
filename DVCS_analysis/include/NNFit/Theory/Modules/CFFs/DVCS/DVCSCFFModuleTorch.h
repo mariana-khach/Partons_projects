@@ -7,6 +7,12 @@
 
 #include <torch/torch.h>
 
+#include "NNFit/Theory/Modules/CFFs/CFFModuleTorch.h"
+
+namespace PARTONS {
+class DVCSObservableKinematic;
+} // namespace PARTONS
+
 /**
  * @class DVCSCFFModuleTorch
  *
@@ -30,6 +36,19 @@
  * the batched BMJ12 port against PARTONS' native arithmetic across a whole
  * dataset rather than at a single kinematic point.
  *
+ * Sits at the channel layer, under the generic CFFModuleTorch<K> -- the same
+ * shape as DVCSProcessModuleTorch under ProcessModuleTorch<K>, and as PARTONS'
+ * own DVCSConvolCoeffFunctionModule under ConvolCoeffFunctionModule<K,R>. The
+ * channel-specific part (which CFFs exist, and the signature that returns
+ * them) lives here; the generic base is a marker, for the reasons its header
+ * gives.
+ *
+ * The template argument is DVCSObservableKinematic, not the CCF kinematics
+ * PARTONS templates its scalar CFF module on: the batched torch path hands the
+ * CFF source observable-level kinematics (xB, t, Q2, E) and lets it do any
+ * conversion itself -- the network wants xB directly, and DVCSCFFScalarTorch
+ * runs the xi-converter and scales modules internally.
+ *
  * Inherits nothing from PARTONS (pure mixin, like DVCSProcessModuleTorch), so
  * reaching it from a DVCSConvolCoeffFunctionModule* is a cross-cast between
  * unrelated base subobjects -- dynamic_cast, never static_cast.
@@ -40,7 +59,8 @@
  * scalar model's values enter as constants and the observable simply comes
  * back detached.
  */
-class DVCSCFFModuleTorch {
+class DVCSCFFModuleTorch
+        : public CFFModuleTorch<PARTONS::DVCSObservableKinematic> {
 
 public:
 
@@ -59,18 +79,26 @@ public:
 
     /**
      * All four CFFs for the whole batch in one evaluation.
-     * @param xB,t,Q2 [N] raw kinematics tensors (xB directly, NOT skewness:
-     *                the batched path does not round-trip through xi).
-     * @param E       [N] beam energy. Unused by a CFF model that depends only
-     *                on (xB, t, Q2) -- the network ignores it -- but PARTONS'
-     *                xi-converter and scales modules are defined over the full
-     *                DVCSObservableKinematic, so an implementation that defers
-     *                to them needs the complete kinematics rather than a
-     *                fabricated beam energy.
+     *
+     * Takes the CONVOL-COEFF-FUNCTION kinematics, the same five quantities
+     * PARTONS::DVCSConvolCoeffFunctionKinematic carries, because that is what
+     * the scalar chain hands its CFF module: DVCSProcessModule::
+     * computeConvolCoeffFunction runs the xi-converter and the scales module
+     * and passes (xi, t, Q2, muF2, muR2) down. The process module converts;
+     * the CFF module receives. Mirroring that here keeps the two chains
+     * link-for-link and means an implementation wrapping a scalar model has
+     * only to build the bean it is handed -- no xi-converter or scales module
+     * of its own, and no beam energy it would otherwise have to be given
+     * purely to feed them.
+     *
+     * A CFF source parameterized in xB (the network) converts back itself:
+     * xB = 2*xi / (1 + xi), one tensor op.
+     *
+     * @param xi,t,Q2,muF2,muR2 [N] kinematics tensors, no grad.
      */
-    virtual AllCFFsTensorBatch computeAllCFFsTensorBatch(const torch::Tensor& xB,
+    virtual AllCFFsTensorBatch computeAllCFFsTensorBatch(const torch::Tensor& xi,
             const torch::Tensor& t, const torch::Tensor& Q2,
-            const torch::Tensor& E) = 0;
+            const torch::Tensor& muF2, const torch::Tensor& muR2) = 0;
 };
 
 #endif /* DVCS_CFF_MODULE_TORCH_H */

@@ -20,6 +20,9 @@
 // DVCSProcessModule.h only forward-declares DVCSConvolCoeffFunctionModule.
 #include <partons/modules/convol_coeff_function/DVCS/DVCSConvolCoeffFunctionModule.h>
 
+#include <partons/beans/Scales.h>
+#include <partons/modules/scales/DVCS/DVCSScalesModule.h>
+#include <partons/modules/xi_converter/DVCS/DVCSXiConverterModule.h>
 #include "NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFModuleTorch.h"
 
 // ---------------------------------------------------------------------------
@@ -486,19 +489,39 @@ void DVCSProcessBMJ12Torch::setupKinematicsTorchBatch(const torch::Tensor& xB,
     }
 
     // ----- CFFs as tensors, batched ----------------------------------------
+    // The process module converts, the CFF module receives -- exactly as in
+    // DVCSProcessModule::computeConvolCoeffFunction, which runs the
+    // xi-converter and the scales module and hands the CFF module
+    // (xi, t, Q2, muF2, muR2). Same modules this process is wired with, so the
+    // torch path cannot drift from the scalar path's conventions. N scalar
+    // calls, once per prepare (not per phi node, not per epoch step).
+    const int64_t nPts = xB.size(0);
+    std::vector<double> xiVec(nPts), muF2Vec(nPts), muR2Vec(nPts);
+    for (int64_t i = 0; i < nPts; ++i) {
+        PARTONS::DVCSObservableKinematic kin(xB[i].item<double>(),
+                t[i].item<double>(), Q2[i].item<double>(), E[i].item<double>(),
+                0.); // phi is irrelevant to both modules
+        xiVec[i]   = m_pXiConverterModule->compute(kin).getValue();
+        PARTONS::Scales scale = m_pScaleModule->compute(kin);
+        muF2Vec[i] = scale.getMuF2().getValue();
+        muR2Vec[i] = scale.getMuR2().getValue();
+    }
+    const torch::TensorOptions f64opt = torch::TensorOptions().dtype(torch::kFloat64);
+    torch::Tensor xiT   = torch::tensor(xiVec, f64opt);
+    torch::Tensor muF2T = torch::tensor(muF2Vec, f64opt);
+    torch::Tensor muR2T = torch::tensor(muR2Vec, f64opt);
+
     // Cross-cast to the tensor interface, not to a concrete module: any CFF
-    // source implementing DVCSCFFModuleTorch can drive this chain (the trained
-    // network today; a scalar-PARTONS-model adapter for validation later).
-    // An explicitly injected source wins (setCFFModuleTorch); otherwise the
-    // wired convol-coeff module must implement the tensor interface.
-    DVCSCFFModuleTorch* pCFF = m_pCFFTorch
-            ? m_pCFFTorch
-            : dynamic_cast<DVCSCFFModuleTorch*>(m_pConvolCoeffFunctionModule);
+    // source implementing DVCSCFFModuleTorch can drive this chain -- the
+    // trained network, or DVCSCFFScalarTorch wrapping a scalar PARTONS model.
+    DVCSCFFModuleTorch* pCFF =
+            dynamic_cast<DVCSCFFModuleTorch*>(m_pConvolCoeffFunctionModule);
     if (!pCFF) {
         throw ElemUtils::CustomException(getClassName(), __func__,
                 "Tensor path requires a DVCSCFFModuleTorch convol-coeff module.");
     }
-    DVCSCFFModuleTorch::AllCFFsTensorBatch cffs = pCFF->computeAllCFFsTensorBatch(xB, t, Q2, E);
+    DVCSCFFModuleTorch::AllCFFsTensorBatch cffs =
+            pCFF->computeAllCFFsTensorBatch(xiT, t, Q2, muF2T, muR2T);
     m_CFFstdBatch[0] = cffs.H;
     m_CFFstdBatch[1] = cffs.E;
     m_CFFstdBatch[2] = cffs.Ht;

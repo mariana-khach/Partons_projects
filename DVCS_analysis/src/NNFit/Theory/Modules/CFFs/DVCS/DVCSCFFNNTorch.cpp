@@ -178,9 +178,14 @@ torch::Tensor DVCSCFFNNTorch::cffComponentTensorBatch(const torch::Tensor& outpu
 // ---------------------------------------------------------------------------
 
 DVCSCFFNNTorch::AllCFFsTensorBatch DVCSCFFNNTorch::computeAllCFFsTensorBatch(
-        const torch::Tensor& xB, const torch::Tensor& t, const torch::Tensor& Q2,
-        const torch::Tensor& /* E */) {
-    // E is ignored: the network's input features are (xB, t, Q2).
+        const torch::Tensor& xi, const torch::Tensor& t, const torch::Tensor& Q2,
+        const torch::Tensor& /* muF2 */, const torch::Tensor& /* muR2 */) {
+
+    // Back to the network's own feature. The scalar chain hands every CFF
+    // module the CCF kinematics (xi, t, Q2, muF2, muR2), so the tensor chain
+    // does too; a module parameterized in xB converts here. The scales are
+    // ignored -- the network is scale-blind by construction.
+    torch::Tensor xB = 2. * xi / (1. + xi);
     torch::Tensor output = forwardNNBatch(xB, t, Q2);
     AllCFFsTensorBatch cffs;
     cffs.H  = cffComponentTensorBatch(output, "H");

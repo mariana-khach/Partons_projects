@@ -689,6 +689,17 @@ void CFF_NN_Fitter::observ_calc_scalar_cff() {
     // ---- Path B: the same model through the tensor chain ------------------
     DVCSConvolCoeffFunctionModule* pCFFScalarB = makeConstantCFFModule();
 
+    // The adapter is a CFF module like any other -- created by the factory,
+    // attached with setConvolCoeffFunctionModule(), found by the same
+    // cross-cast every CFF source goes through. It wraps the scalar model;
+    // the process module hands it CCF kinematics exactly as it would the
+    // network.
+    DVCSConvolCoeffFunctionModule* pCFFAdapter =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSConvolCoeffFunctionModule(
+                    DVCSCFFScalarTorch::classId);
+    static_cast<DVCSCFFScalarTorch*>(pCFFAdapter)->setScalarModule(pCFFScalarB);
+    pCFFAdapter->setQCDOrderType(PerturbativeQCDOrderType::LO);
+
     DVCSXiConverterModule* pXiB =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
                     DVCSXiConverterXBToXi::classId);
@@ -704,13 +715,9 @@ void CFF_NN_Fitter::observ_calc_scalar_cff() {
 
     pProcessB->setXiConverterModule(pXiB);
     pProcessB->setScaleModule(pScalesB);
-    pProcessB->setConvolCoeffFunctionModule(pCFFScalarB);
+    pProcessB->setConvolCoeffFunctionModule(pCFFAdapter);
     pObsB->setProcessModule(pProcessB);
 
-    // The adapter reads xi and the scales from the very modules this process is
-    // wired with, so it cannot drift from the scalar path's conventions.
-    DVCSCFFScalarTorch cffAdapter(pCFFScalarB, pXiB, pScalesB);
-    static_cast<DVCSProcessBMJ12Torch*>(pProcessB)->setCFFModuleTorch(&cffAdapter);
 
     DVCSObservableServiceTorch* pServiceTorch =
             static_cast<DVCSObservableServiceTorch*>(

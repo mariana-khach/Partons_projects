@@ -739,18 +739,25 @@ torch base to cast to.  The 2026-06-16 rework introduced `ObservableTorch<K>` an
 `ProcessModuleTorch<K>` but never the CFF twin, since there was only ever one implementation.
 
 **`DVCSCFFModuleTorch`** fills that gap: a pure mixin owning `AllCFFsTensorBatch` and one pure
-virtual `computeAllCFFsTensorBatch(xB, t, Q2, E)`.  `DVCSCFFNNTorch` now derives from it
-alongside the PARTONS module, so every link pairs a PARTONS class (identity, registration, the
-scalar contract) with a torch base (the tensor interface).  `E` joined the signature because an
-implementation that defers to PARTONS' xi-converter and scales modules needs the full
-kinematics; the network ignores it.
+virtual `computeAllCFFsTensorBatch(xi, t, Q2, muF2, muR2)`, sitting under a generic
+`CFFModuleTorch<K>` so that every link now has a generic template with a channel class beneath
+it.  `DVCSCFFNNTorch` derives from it alongside the PARTONS module, so every link pairs a PARTONS
+class (identity, registration, the scalar contract) with a torch base (the tensor interface).
+
+The signature carries the **CCF kinematics**, the five quantities
+`DVCSConvolCoeffFunctionKinematic` holds, because that is what the scalar chain hands its CFF
+module: `DVCSProcessModule::computeConvolCoeffFunction` runs the xi-converter and the scales
+module first.  The process converts, the CFF module receives — and the torch chain mirrors that,
+so a source parameterized in xB (the network) converts back itself with one tensor op.
 
 **`DVCSCFFScalarTorch`** is the first second implementation: it presents any scalar PARTONS CFF
 model as a tensor CFF source, evaluating it per point and returning `[N]` **no-grad** complex
 tensors.  Nothing downstream minds — the chain multiplies CFF tensors by no-grad kinematics
-either way, and the observable simply comes back detached.  Kinematics are built exactly as
-`DVCSProcessModule::computeConvolCoeffFunction` builds them, from the same xi-converter and
-scales instances the process module is wired with.
+either way, and the observable simply comes back detached.  It receives CCF kinematics already
+converted, so it has only to build the bean and call the model.  It carries the same dual base as
+`DVCSCFFNNTorch` (PARTONS module + torch mixin), so it is attached with
+`setConvolCoeffFunctionModule()` like any other CFF module rather than through a wiring path of
+its own.
 
 **What it buys** is `observ_calc_scalar_cff()`: fixed CFFs (`DVCSCFFConstant`) pushed through
 PARTONS' native process module *and* through `DVCSProcessBMJ12Torch`, so the two sides share

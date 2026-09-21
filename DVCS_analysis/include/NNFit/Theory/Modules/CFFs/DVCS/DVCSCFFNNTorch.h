@@ -85,11 +85,16 @@ public:
     /**
      * One batched NN forward pass returning all four CFFs as [N] complex
      * tensors with the autograd graph connected to the network parameters.
-     * @param xB,t,Q2 [N] raw kinematics tensors.
+     *
+     * Receives CCF kinematics like any CFF module (see DVCSCFFModuleTorch) and
+     * converts back to the network's own feature, xB = 2*xi / (1 + xi). muF2
+     * and muR2 are ignored: the network is scale-blind by construction, its
+     * inputs being (xB, t, Q2) -- the long-standing caveat, unchanged here.
+     * @param xi,t,Q2,muF2,muR2 [N] kinematics tensors.
      */
-    AllCFFsTensorBatch computeAllCFFsTensorBatch(const torch::Tensor& xB,
+    AllCFFsTensorBatch computeAllCFFsTensorBatch(const torch::Tensor& xi,
             const torch::Tensor& t, const torch::Tensor& Q2,
-            const torch::Tensor& E) override;
+            const torch::Tensor& muF2, const torch::Tensor& muR2) override;
 
     /**
      * Batched (N-point) sibling of computeCFFTensor(): the CFF of a single
