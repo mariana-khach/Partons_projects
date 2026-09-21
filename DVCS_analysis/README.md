@@ -46,7 +46,9 @@ DVCS_analysis/
 │       └── Theory/         # Differentiable physics layer (libtorch + PARTONS subclasses)
 │           └── Modules/                # PARTONS-registered tensor modules + generic templates
 │               ├── MathIntegratorModuleTorch.cpp
-│               ├── CFFs/DVCS/          # DVCSCFFNNTorch.cpp
+│               ├── CFFs/DVCS/          # DVCSCFFModuleTorch.h (interface),
+│               │                       # DVCSCFFNNTorch.cpp,
+│               │                       # DVCSCFFScalarTorch.cpp (scalar-model adapter)
 │               ├── Processes/          # ProcessModuleTorch.h (generic)
 │               │   └── DVCS/           # DVCSProcessModuleTorch.h, DVCSProcessBMJ12Torch.cpp
 │               ├── Obs/                # ObservableTorch.h (generic)
@@ -728,6 +730,50 @@ discard the failed net and keep the successes, as here — only the ending diffe
 
 ---
 
+### A tensor interface for the CFF link, and a scalar-model adapter (2026-09-21)
+
+The torch chain's bottom link was pinned to a single implementation:
+`setupKinematicsTorchBatch` cross-cast its convol-coeff module to the **concrete**
+`DVCSCFFNNTorch`, because — unlike the observable and process links — the CFF link had no
+torch base to cast to.  The 2026-06-16 rework introduced `ObservableTorch<K>` and
+`ProcessModuleTorch<K>` but never the CFF twin, since there was only ever one implementation.
+
+**`DVCSCFFModuleTorch`** fills that gap: a pure mixin owning `AllCFFsTensorBatch` and one pure
+virtual `computeAllCFFsTensorBatch(xB, t, Q2, E)`.  `DVCSCFFNNTorch` now derives from it
+alongside the PARTONS module, so every link pairs a PARTONS class (identity, registration, the
+scalar contract) with a torch base (the tensor interface).  `E` joined the signature because an
+implementation that defers to PARTONS' xi-converter and scales modules needs the full
+kinematics; the network ignores it.
+
+**`DVCSCFFScalarTorch`** is the first second implementation: it presents any scalar PARTONS CFF
+model as a tensor CFF source, evaluating it per point and returning `[N]` **no-grad** complex
+tensors.  Nothing downstream minds — the chain multiplies CFF tensors by no-grad kinematics
+either way, and the observable simply comes back detached.  Kinematics are built exactly as
+`DVCSProcessModule::computeConvolCoeffFunction` builds them, from the same xi-converter and
+scales instances the process module is wired with.
+
+**What it buys** is `observ_calc_scalar_cff()`: fixed CFFs (`DVCSCFFConstant`) pushed through
+PARTONS' native process module *and* through `DVCSProcessBMJ12Torch`, so the two sides share
+nothing but four constant numbers.  Until now the native-vs-torch check ran the same trained
+network on both sides, which cannot isolate the process layer.  First result, at
+xB=0.2, t=−0.2, Q²=2, E=5.932:
+
+| Path | A_LU^{sin1φ} |
+|---|---|
+| native scalar BMJ12 | 0.0863602 |
+| torch batched BMJ12 | 0.0863609 |
+| difference | 6.4×10⁻⁷ (7.4×10⁻⁶ relative) |
+
+That is the standing GL-10-vs-DEXP quadrature gap, not a physics difference.
+
+Two things `DVCSCFFConstant` taught us, both now in comments: the native BMJ12 process requests
+**every** GPD type the module advertises — transversity, twist-3, even the DDVCS `HL` — and
+`setCFFs()` *replaces* the map rather than merging, so handing it four entries makes it throw on
+the fifth type requested.  Start from the module's own pre-zeroed map and overwrite the four
+twist-2 entries; those zeros are also exactly what the torch port assumes.
+
+---
+
 ## Current status / open items
 
 - **Raw per-φ A_LU leaf** — `DVCSAluMinusTorch::computeTensorImplBatch` is a throwing
@@ -762,9 +808,11 @@ discard the failed net and keep the successes, as here — only the ending diffe
   continues onto an incomplete ensemble.  The `.out` file does end with the
   `[ERROR] (main::main) Replica N still hopeless …` line, so a human reading the log sees it.
   Fix: an `int exit_code` set in both catch blocks and returned at the end.
-- **Cross-path verification is one kinematic point** — spot-checking a few points spanning the
-  dataset's range would be cheap insurance against a silent desync between the native and torch
-  BMJ12 transcriptions.
+- **Cross-path verification is still one kinematic point** — but the machinery to widen it now
+  exists: `observ_calc_scalar_cff()` (2026-09-21) compares native and torch BMJ12 with a fixed
+  CFF model, so extending it to a scan over the dataset's xB/t/Q² range is a loop, not a design
+  problem.  That scan is the cheap insurance against a silent desync between the two
+  transcriptions.
 
 ---
 

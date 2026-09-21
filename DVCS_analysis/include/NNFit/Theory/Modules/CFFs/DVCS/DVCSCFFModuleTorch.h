@@ -61,9 +61,16 @@ public:
      * All four CFFs for the whole batch in one evaluation.
      * @param xB,t,Q2 [N] raw kinematics tensors (xB directly, NOT skewness:
      *                the batched path does not round-trip through xi).
+     * @param E       [N] beam energy. Unused by a CFF model that depends only
+     *                on (xB, t, Q2) -- the network ignores it -- but PARTONS'
+     *                xi-converter and scales modules are defined over the full
+     *                DVCSObservableKinematic, so an implementation that defers
+     *                to them needs the complete kinematics rather than a
+     *                fabricated beam energy.
      */
     virtual AllCFFsTensorBatch computeAllCFFsTensorBatch(const torch::Tensor& xB,
-            const torch::Tensor& t, const torch::Tensor& Q2) = 0;
+            const torch::Tensor& t, const torch::Tensor& Q2,
+            const torch::Tensor& E) = 0;
 };
 
 #endif /* DVCS_CFF_MODULE_TORCH_H */

@@ -88,7 +88,8 @@ public:
      * @param xB,t,Q2 [N] raw kinematics tensors.
      */
     AllCFFsTensorBatch computeAllCFFsTensorBatch(const torch::Tensor& xB,
-            const torch::Tensor& t, const torch::Tensor& Q2) override;
+            const torch::Tensor& t, const torch::Tensor& Q2,
+            const torch::Tensor& E) override;
 
     /**
      * Batched (N-point) sibling of computeCFFTensor(): the CFF of a single

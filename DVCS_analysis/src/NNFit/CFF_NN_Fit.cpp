@@ -5,6 +5,8 @@
 #include "../../include/NNFit/CFF_NN_Fit.h"
 #include "../../include/NNFit/CustomLoss.h"
 #include "../../include/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.h"
+#include "../../include/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFScalarTorch.h"
+#include <partons/modules/convol_coeff_function/DVCS/DVCSCFFConstant.h>
 #include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSObservableTorch.h"
 #include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.h"
 #include "../../include/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.h"
@@ -621,6 +623,120 @@ void CFF_NN_Fitter::observ_calc() {
     std::cout << "Observable: " << pDVCSObs->getClassName() << "\n";
     std::cout << "Kinematics: xB=0.2, t=-0.2, Q2=2, E=5.932, phi=6\n";
     std::cout << "DVCSAluMinusSin1Phi = " << result << "\n";
+}
+
+void CFF_NN_Fitter::observ_calc_scalar_cff() {
+
+    using namespace PARTONS;
+
+    // A differential test of the batched BMJ12 port that does NOT involve the
+    // network: the same fixed CFFs are pushed through PARTONS' native scalar
+    // process module and through DVCSProcessBMJ12Torch, so any disagreement is
+    // in the transcription of BMJ12 and nothing else. The standing
+    // observ_calc_torch_scalar check uses the trained net on both sides, which
+    // cannot isolate the process layer this way.
+    //
+    // DVCSCFFConstant is deliberate: no GPD module, no evolution, no
+    // convolution integral -- just four numbers, so the comparison is of the
+    // cross-section arithmetic alone.
+    const std::complex<double> cffH(1.5, 3.0);
+    const std::complex<double> cffE(0.7, -0.4);
+    const std::complex<double> cffHt(0.9, 1.1);
+    const std::complex<double> cffEt(-0.3, 0.2);
+
+    // DVCSCFFConstant's constructor pre-fills every GPDType with zero and
+    // advertises them all, and the native BMJ12 process asks for every type the
+    // module advertises. So START from the module's own map and overwrite only
+    // the four twist-2 entries -- replacing the map wholesale makes it throw on
+    // the first type left out. The zeros are also what the torch port assumes
+    // (no transversity, no twist-3), so both paths see the same physics.
+    auto makeConstantCFFModule = [&]() {
+        DVCSConvolCoeffFunctionModule* pMod =
+                Partons::getInstance()->getModuleObjectFactory()->newDVCSConvolCoeffFunctionModule(
+                        DVCSCFFConstant::classId);
+        DVCSCFFConstant* pConst = static_cast<DVCSCFFConstant*>(pMod);
+        std::map<GPDType::Type, std::complex<double> > values = pConst->getCFFs();
+        values[GPDType::H]  = cffH;
+        values[GPDType::E]  = cffE;
+        values[GPDType::Ht] = cffHt;
+        values[GPDType::Et] = cffEt;
+        pConst->setCFFs(values);
+        pMod->setQCDOrderType(PerturbativeQCDOrderType::LO);
+        return pMod;
+    };
+
+    DVCSObservableKinematic dvcsKinematics(0.2, -0.2, 2., 5.932, 6.);
+
+    // ---- Path A: PARTONS native scalar chain ------------------------------
+    DVCSConvolCoeffFunctionModule* pCFFScalarA = makeConstantCFFModule();
+
+    DVCSXiConverterModule* pXiA =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
+                    DVCSXiConverterXBToXi::classId);
+    DVCSScalesModule* pScalesA =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSScalesModule(
+                    DVCSScalesQ2Multiplier::classId);
+    DVCSProcessModule* pProcessA =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSProcessModule(
+                    DVCSProcessBMJ12::classId);
+    DVCSObservable* pObsA =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
+                    DVCSAluMinusSin1Phi::classId);
+
+    pProcessA->setXiConverterModule(pXiA);
+    pProcessA->setScaleModule(pScalesA);
+    pProcessA->setConvolCoeffFunctionModule(pCFFScalarA);
+    pObsA->setProcessModule(pProcessA);
+
+    DVCSObservableResult resultA =
+            Partons::getInstance()->getServiceObjectRegistry()->getDVCSObservableService()->computeSingleKinematic(
+                    dvcsKinematics, pObsA);
+    const double valueNative = resultA.getValue().getValue();
+
+    // ---- Path B: the same model through the tensor chain ------------------
+    DVCSConvolCoeffFunctionModule* pCFFScalarB = makeConstantCFFModule();
+
+    DVCSXiConverterModule* pXiB =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
+                    DVCSXiConverterXBToXi::classId);
+    DVCSScalesModule* pScalesB =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSScalesModule(
+                    DVCSScalesQ2Multiplier::classId);
+    DVCSProcessModule* pProcessB =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSProcessModule(
+                    DVCSProcessBMJ12Torch::classId);
+    DVCSObservable* pObsB =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
+                    DVCSAluMinusSin1PhiTorch::classId);
+
+    pProcessB->setXiConverterModule(pXiB);
+    pProcessB->setScaleModule(pScalesB);
+    pProcessB->setConvolCoeffFunctionModule(pCFFScalarB);
+    pObsB->setProcessModule(pProcessB);
+
+    // The adapter reads xi and the scales from the very modules this process is
+    // wired with, so it cannot drift from the scalar path's conventions.
+    DVCSCFFScalarTorch cffAdapter(pCFFScalarB, pXiB, pScalesB);
+    static_cast<DVCSProcessBMJ12Torch*>(pProcessB)->setCFFModuleTorch(&cffAdapter);
+
+    DVCSObservableServiceTorch* pServiceTorch =
+            static_cast<DVCSObservableServiceTorch*>(
+                    Partons::getInstance()->getServiceObjectRegistry()->get(
+                            "DVCSObservableServiceTorch"));
+    DVCSObservableTorch* pObsTorchB = dynamic_cast<DVCSObservableTorch*>(pObsB);
+
+    torch::Tensor resultTensor =
+            pServiceTorch->computeSingleKinematicTorch(dvcsKinematics, pObsTorchB);
+    const double valueTorch = resultTensor.item<double>();
+
+    std::cout << "\nScalar-CFF differential test (DVCSCFFConstant, no network)\n";
+    std::cout << "Kinematics: xB=0.2, t=-0.2, Q2=2, E=5.932\n";
+    std::cout << "  native scalar BMJ12 = " << valueNative << "\n";
+    std::cout << "  torch batched BMJ12 = " << valueTorch << "\n";
+    std::cout << "  difference          = " << (valueTorch - valueNative) << "\n";
+    std::cout << "  requires_grad       = "
+            << (resultTensor.requires_grad() ? "true" : "false")
+            << " (expected false: constant CFFs carry no graph)\n";
 }
 
 void CFF_NN_Fitter::observ_calc_torch() {

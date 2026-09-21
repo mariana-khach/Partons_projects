@@ -87,6 +87,13 @@ public:
     void observ_calc_torch();
     void observ_calc_torch_scalar();
 
+    // Differential test of the batched BMJ12 port with the network taken out of
+    // the picture: fixed CFFs (DVCSCFFConstant) pushed through PARTONS' native
+    // scalar process module and through DVCSProcessBMJ12Torch (via
+    // DVCSCFFScalarTorch), so a disagreement can only come from the two
+    // transcriptions of BMJ12. Needs no trained model.
+    void observ_calc_scalar_cff();
+
     // Train n_replicas independent fits to Monte-Carlo-smeared pseudodata
     // (y_smeared = y_obs + N(0, sigma), same formula/independence as Gepard's
     // datasets_replica_vectloss: fresh smear + fresh train/val split + fresh

@@ -178,7 +178,9 @@ torch::Tensor DVCSCFFNNTorch::cffComponentTensorBatch(const torch::Tensor& outpu
 // ---------------------------------------------------------------------------
 
 DVCSCFFNNTorch::AllCFFsTensorBatch DVCSCFFNNTorch::computeAllCFFsTensorBatch(
-        const torch::Tensor& xB, const torch::Tensor& t, const torch::Tensor& Q2) {
+        const torch::Tensor& xB, const torch::Tensor& t, const torch::Tensor& Q2,
+        const torch::Tensor& /* E */) {
+    // E is ignored: the network's input features are (xB, t, Q2).
     torch::Tensor output = forwardNNBatch(xB, t, Q2);
     AllCFFsTensorBatch cffs;
     cffs.H  = cffComponentTensorBatch(output, "H");

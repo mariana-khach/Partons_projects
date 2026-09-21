@@ -489,13 +489,16 @@ void DVCSProcessBMJ12Torch::setupKinematicsTorchBatch(const torch::Tensor& xB,
     // Cross-cast to the tensor interface, not to a concrete module: any CFF
     // source implementing DVCSCFFModuleTorch can drive this chain (the trained
     // network today; a scalar-PARTONS-model adapter for validation later).
-    DVCSCFFModuleTorch* pCFF =
-            dynamic_cast<DVCSCFFModuleTorch*>(m_pConvolCoeffFunctionModule);
+    // An explicitly injected source wins (setCFFModuleTorch); otherwise the
+    // wired convol-coeff module must implement the tensor interface.
+    DVCSCFFModuleTorch* pCFF = m_pCFFTorch
+            ? m_pCFFTorch
+            : dynamic_cast<DVCSCFFModuleTorch*>(m_pConvolCoeffFunctionModule);
     if (!pCFF) {
         throw ElemUtils::CustomException(getClassName(), __func__,
                 "Tensor path requires a DVCSCFFModuleTorch convol-coeff module.");
     }
-    DVCSCFFModuleTorch::AllCFFsTensorBatch cffs = pCFF->computeAllCFFsTensorBatch(xB, t, Q2);
+    DVCSCFFModuleTorch::AllCFFsTensorBatch cffs = pCFF->computeAllCFFsTensorBatch(xB, t, Q2, E);
     m_CFFstdBatch[0] = cffs.H;
     m_CFFstdBatch[1] = cffs.E;
     m_CFFstdBatch[2] = cffs.Ht;

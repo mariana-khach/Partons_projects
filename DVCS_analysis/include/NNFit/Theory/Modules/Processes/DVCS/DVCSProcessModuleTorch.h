@@ -33,12 +33,29 @@
  * A tensor observable holds the attached process through this base pointer and
  * dispatches virtually, so any concrete DVCS tensor process is a drop-in.
  */
+class DVCSCFFModuleTorch;
+
 class DVCSProcessModuleTorch
         : public ProcessModuleTorch<PARTONS::DVCSObservableKinematic> {
 
 public:
 
     virtual ~DVCSProcessModuleTorch() = default;
+
+    /**
+     * Drive the tensor chain from a CFF source that is not the wired PARTONS
+     * convol-coeff module, and takes precedence over it. Needed because a
+     * DVCSCFFModuleTorch implementation is not required to be a PARTONS module
+     * at all -- DVCSCFFScalarTorch, which adapts a scalar CFF model for
+     * validation, has no classId and cannot go through
+     * setConvolCoeffFunctionModule(). Non-owning; pass nullptr to fall back to
+     * the wired module. The usual case (DVCSCFFNNTorch, which IS both) leaves
+     * this unset and is found by cross-cast.
+     */
+    void setCFFModuleTorch(DVCSCFFModuleTorch* pCFFTorch) {
+        m_pCFFTorch = pCFFTorch;
+    }
+
 
     /**
      * Prepare the phi-independent quantities once for N kinematic points at
@@ -123,6 +140,9 @@ protected:
     virtual void setupKinematicsTorchBatch(const torch::Tensor& xB,
             const torch::Tensor& t, const torch::Tensor& Q2,
             const torch::Tensor& E) = 0;
+
+    /// Optional CFF source overriding the wired convol-coeff module (non-owning).
+    DVCSCFFModuleTorch* m_pCFFTorch = nullptr;
 
     /// Set by prepareTensorBatch(); gates the lightweight batched assemble overloads.
     bool m_preparedBatch = false;
