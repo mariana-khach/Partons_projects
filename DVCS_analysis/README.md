@@ -779,8 +779,10 @@ Still far below the data's own 6% precision, so no fit result is affected — bu
 **The default was therefore raised to GL-20** (2026-09-21), moving the worst-case agreement to
 ~1.2×10⁻⁸ for twice the φ nodes.  Not GL-40: at GL-20 the quadrature residual already sits ~5
 orders of magnitude below the data's own 6% precision, so further nodes buy nothing observable.
-The per-epoch cost was not measured in a controlled benchmark — the expectation is that it is
-nearly free, since batched cost tracks operation count rather than element count and M enters the
+The extra nodes turn out to be **free**: normalizing two full pipeline runs by their logged
+epochs gives 31.640 ms per epoch-line at GL-10 against 31.660 ms at GL-20, a difference of
+**+0.06%** — inside the noise.  That confirms the scaling argument above from the other side: what
+costs time is the number of tensor operations, not how many elements they hold, and M enters the
 `[N,M]` tensors exactly as N does.
 
 A side effect worth knowing: the three `observ_calc*` paths now agree to **every printed digit**
@@ -830,10 +832,8 @@ twist-2 entries; those zeros are also exactly what the torch port assumes.
   continues onto an incomplete ensemble.  The `.out` file does end with the
   `[ERROR] (main::main) Replica N still hopeless …` line, so a human reading the log sees it.
   Fix: an `int exit_code` set in both catch blocks and returned at the end.
-- **φ-quadrature order was raised 10 → 20** (2026-09-21), taking the worst-case deviation from
-  adaptive DEXP from 4.2×10⁻⁴ to ~1.2×10⁻⁸.  What remains open is only the timing: the per-epoch
-  cost of the extra nodes has not been measured in a controlled benchmark, just argued from the
-  batched-cost scaling.
+- ~~φ-quadrature order~~ **resolved 2026-09-21**: raised 10 → 20, taking the worst-case deviation
+  from adaptive DEXP from 4.2×10⁻⁴ to ~1.2×10⁻⁸ at a measured cost of +0.06% per epoch.
 
 ---
 

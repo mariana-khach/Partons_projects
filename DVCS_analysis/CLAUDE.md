@@ -868,7 +868,16 @@ Note `integrateTorchBatch` supports **fixed rules only** — DEXP is rejected �
 
 Taken: `DVCSAluMinusSin1PhiTorch`'s constructor now selects `GL, 20`. That moves the worst-case agreement with PARTONS' native BMJ12 from 4.2e-4 to ~1.2e-8 — four orders of magnitude, for twice the φ nodes.
 
-Why 20 and not 40: 20 already puts the quadrature residual ~5 orders of magnitude below the data's own precision (σ/y ≈ 6%), so 40 would buy nothing observable. The per-epoch cost was **not** measured in a controlled benchmark; the expectation is that it is nearly free (the 2026-09-15 timing showed batched cost tracks operation count rather than element count, and M enters the `[N,M]` tensors the same way N does), and a full pipeline run at GL-20 is the sanity check on that.
+Why 20 and not 40: 20 already puts the quadrature residual ~5 orders of magnitude below the data's own precision (σ/y ≈ 6%), so 40 would buy nothing observable.
+
+**The extra nodes are free.** Normalizing two full pipeline runs by their logged epochs (they differ because each seeds a fresh net and stops at a different epoch):
+
+| | wall | epoch-lines | per epoch-line |
+|---|---|---|---|
+| GL-10 | 357.9 s | 11312 | 31.640 ms |
+| GL-20 | 305.7 s | 9656 | 31.660 ms |
+
+**+0.06%** — inside the noise, confirming the 2026-09-15 conclusion that batched cost tracks *operation count*, not element count: M enters the `[N,M]` tensors exactly as N does, and neither moves the needle at these sizes. Not a controlled benchmark (wall time includes `predict()`, the three `observ_calc*` calls and the scan; epoch-lines span central fit plus replicas), but both runs have identical structure and the fixed overhead is a couple of seconds out of 300, so the ratio is good to far better than the 0.06% it shows.
 
 Verified on a full run at GL-20:
 
