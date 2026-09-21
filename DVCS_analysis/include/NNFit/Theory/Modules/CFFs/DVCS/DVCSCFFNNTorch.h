@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "NNFit/CFF_NN_Fit.h"
+#include "NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFModuleTorch.h"
 
 /**
  * @class DVCSCFFNNTorch
@@ -27,8 +28,13 @@
  * xB is derived from PARTONS m_xi as xB = 2*xi / (1 + xi).
  * If the output layer does not contain the Re or Im CFF name for the
  * requested GPD type, the corresponding value is set to 0.
+ *
+ * Dual base, like the other two links of the torch chain: the PARTONS module
+ * supplies identity, registration and the scalar contract; DVCSCFFModuleTorch
+ * supplies the tensor interface the batched chain casts to.
  */
-class DVCSCFFNNTorch : public PARTONS::DVCSConvolCoeffFunctionModule {
+class DVCSCFFNNTorch : public PARTONS::DVCSConvolCoeffFunctionModule,
+        public DVCSCFFModuleTorch {
 
 public:
 
@@ -51,18 +57,9 @@ public:
 
     virtual std::complex<double> computeCFF();
 
-    /**
-     * The four standard DVCS CFFs at N kinematic points, as [N] complex
-     * (float64) tensors produced by a single batched NN forward pass.
-     * Components the network does not output (no "Re<name>"/"Im<name>" in the
-     * output layer) are zero.
-     */
-    struct AllCFFsTensorBatch {
-        torch::Tensor H;  ///< CFF H  ([N] complex double).
-        torch::Tensor E;  ///< CFF E.
-        torch::Tensor Ht; ///< CFF Ht (H-tilde).
-        torch::Tensor Et; ///< CFF Et (E-tilde).
-    };
+    // AllCFFsTensorBatch is inherited from DVCSCFFModuleTorch. Components the
+    // network does not output (no "Re<name>"/"Im<name>" in the output layer)
+    // come back zero.
 
     /**
      * Set the CFF-module kinematics for the tensor path (the scalar path sets
@@ -91,7 +88,7 @@ public:
      * @param xB,t,Q2 [N] raw kinematics tensors.
      */
     AllCFFsTensorBatch computeAllCFFsTensorBatch(const torch::Tensor& xB,
-            const torch::Tensor& t, const torch::Tensor& Q2);
+            const torch::Tensor& t, const torch::Tensor& Q2) override;
 
     /**
      * Batched (N-point) sibling of computeCFFTensor(): the CFF of a single

@@ -16,7 +16,11 @@
 
 #include <cmath>
 
-#include "NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.h"
+// Complete type needed as the SOURCE of the cross-cast below:
+// DVCSProcessModule.h only forward-declares DVCSConvolCoeffFunctionModule.
+#include <partons/modules/convol_coeff_function/DVCS/DVCSConvolCoeffFunctionModule.h>
+
+#include "NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFModuleTorch.h"
 
 // ---------------------------------------------------------------------------
 // Registration / boilerplate
@@ -481,14 +485,17 @@ void DVCSProcessBMJ12Torch::setupKinematicsTorchBatch(const torch::Tensor& xB,
                 * (1. + m_epsrootBatch[0] - tQ2 * (1. - 2 * xB - m_epsrootBatch[0]));
     }
 
-    // ----- CFFs from the neural network (tensors, batched) -----------------
-    DVCSCFFNNTorch* pCFF =
-            dynamic_cast<DVCSCFFNNTorch*>(m_pConvolCoeffFunctionModule);
+    // ----- CFFs as tensors, batched ----------------------------------------
+    // Cross-cast to the tensor interface, not to a concrete module: any CFF
+    // source implementing DVCSCFFModuleTorch can drive this chain (the trained
+    // network today; a scalar-PARTONS-model adapter for validation later).
+    DVCSCFFModuleTorch* pCFF =
+            dynamic_cast<DVCSCFFModuleTorch*>(m_pConvolCoeffFunctionModule);
     if (!pCFF) {
         throw ElemUtils::CustomException(getClassName(), __func__,
-                "Tensor path requires a DVCSCFFNNTorch convol-coeff module.");
+                "Tensor path requires a DVCSCFFModuleTorch convol-coeff module.");
     }
-    DVCSCFFNNTorch::AllCFFsTensorBatch cffs = pCFF->computeAllCFFsTensorBatch(xB, t, Q2);
+    DVCSCFFModuleTorch::AllCFFsTensorBatch cffs = pCFF->computeAllCFFsTensorBatch(xB, t, Q2);
     m_CFFstdBatch[0] = cffs.H;
     m_CFFstdBatch[1] = cffs.E;
     m_CFFstdBatch[2] = cffs.Ht;
