@@ -755,16 +755,27 @@ scales instances the process module is wired with.
 **What it buys** is `observ_calc_scalar_cff()`: fixed CFFs (`DVCSCFFConstant`) pushed through
 PARTONS' native process module *and* through `DVCSProcessBMJ12Torch`, so the two sides share
 nothing but four constant numbers.  Until now the native-vs-torch check ran the same trained
-network on both sides, which cannot isolate the process layer.  First result, at
-xB=0.2, t=−0.2, Q²=2, E=5.932:
+network on both sides, which cannot isolate the process layer.  It scans **every point of the
+dataset** and drives the torch side through `computeManyKinematicTorch`, making it also the only
+check that exercises the batched `[N,M]` path at N>1.
 
-| Path | A_LU^{sin1φ} |
+Across the 16-point CLAS07 file, most points agree to ~10⁻⁵ relative and the worst reaches
+4.2×10⁻⁴.  That residual was **measured**, not assumed, to be φ-quadrature error, by raising the
+torch integrator order and re-running the scan:
+
+| torch φ-integrator | max relative deviation |
 |---|---|
-| native scalar BMJ12 | 0.0863602 |
-| torch batched BMJ12 | 0.0863609 |
-| difference | 6.4×10⁻⁷ (7.4×10⁻⁶ relative) |
+| GL-10 (default) | 4.2×10⁻⁴ |
+| GL-20 | 1.2×10⁻⁸ |
+| GL-40 | 1.8×10⁻¹³ |
+| GL-80 | 1.7×10⁻¹³ (double-precision floor) |
 
-That is the standing GL-10-vs-DEXP quadrature gap, not a physics difference.
+So the two independent BMJ12 transcriptions agree to ~2×10⁻¹³ once φ is resolved — the strongest
+validation the torch port has had.  It also corrects the 2026-06-22 claim that GL-10 reproduces
+DEXP to ~6 significant figures: that was one kinematic point, and across the dataset it is ~3.4.
+Still far below the data's own 6% precision, so no fit result is affected — but the margin is
+100× smaller than advertised, and raising the default order is likely near-free given that
+batched cost is dominated by per-operation overhead rather than element count.
 
 Two things `DVCSCFFConstant` taught us, both now in comments: the native BMJ12 process requests
 **every** GPD type the module advertises — transversity, twist-3, even the DDVCS `HL` — and
@@ -808,11 +819,11 @@ twist-2 entries; those zeros are also exactly what the torch port assumes.
   continues onto an incomplete ensemble.  The `.out` file does end with the
   `[ERROR] (main::main) Replica N still hopeless …` line, so a human reading the log sees it.
   Fix: an `int exit_code` set in both catch blocks and returned at the end.
-- **Cross-path verification is still one kinematic point** — but the machinery to widen it now
-  exists: `observ_calc_scalar_cff()` (2026-09-21) compares native and torch BMJ12 with a fixed
-  CFF model, so extending it to a scan over the dataset's xB/t/Q² range is a loop, not a design
-  problem.  That scan is the cheap insurance against a silent desync between the two
-  transcriptions.
+- **GL-10 is under-resolved for the φ-moment** — the dataset scan measures up to 4.2×10⁻⁴
+  relative error against adaptive DEXP, versus ~10⁻⁸ at GL-20 and ~10⁻¹³ at GL-40.  Harmless for
+  fitting (the data carry ~6% errors) but the accuracy is nearly free to recover, and
+  `integrateTorchBatch` supports fixed rules only, so raising the order is the available lever.
+  Left unchanged pending a deliberate decision and a timing measurement.
 
 ---
 

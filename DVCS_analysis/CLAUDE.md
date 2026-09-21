@@ -56,7 +56,7 @@ This is the active development area. It implements a differentiable pipeline:
 3. `observ_calc()` — base-PARTONS scalar reference: `DVCSCFFNNTorch` + base `DVCSProcessBMJ12` + base `DVCSAluMinusSin1Phi` via `DVCSObservableService`.
 4. `observ_calc_torch()` — same observable through the PARTONS-tensor chain via `DVCSObservableServiceTorch::computeSingleKinematicTorch` → `computeTensor()`, inside the libtorch autograd graph.
 5. `observ_calc_torch_scalar()` — the `*Torch` subclasses driven through the standard `DVCSObservableService`; the inherited scalar virtuals wrap the tensor methods under `NoGradGuard`+`.item()` (verification path — same torch physics, gradient dropped).
-5b. `observ_calc_scalar_cff()` — differential test of the **BMJ12 transcription itself**, with the network out of the picture: fixed CFFs (`DVCSCFFConstant`) are pushed through PARTONS' native scalar process module and, via `DVCSCFFScalarTorch`, through `DVCSProcessBMJ12Torch`. The two sides then share nothing but four constant numbers, so any disagreement is in the arithmetic. Needs no trained model. See 2026-09-21 session notes.
+5b. `observ_calc_scalar_cff()` — differential test of the **BMJ12 transcription itself**, with the network out of the picture: fixed CFFs (`DVCSCFFConstant`) are pushed through PARTONS' native scalar process module and, via `DVCSCFFScalarTorch`, through `DVCSProcessBMJ12Torch`. The two sides then share nothing but four constant numbers, so any disagreement is in the arithmetic. Scans **every point of the dataset**, and drives the torch side through `computeManyKinematicTorch` — so it is also the only check that exercises the batched `[N,M]` path with N>1 (everything else runs at N=1, where a broadcasting mistake cannot show). Prints a per-point table plus max absolute/relative deviation. Needs no trained model. See 2026-09-21 session notes.
 6. `train_replicas(n_replicas, …)` — trains a Monte Carlo replica ensemble for a CFF uncertainty band: each replica independently fits Monte-Carlo-smeared pseudodata (`y_smeared = y_obs + N(0, sigma)`), with a fresh train/val split, fresh weight init, and fresh optimizer per replica, via the shared `fit_once()` helper (also used internally by `train_nn()` for the unsmeared central fit). A replica whose validation loss diverges (NaN/Inf) or stays above a "hopeless" reduced-χ²/n threshold at a periodic checkpoint epoch is discarded and fully redrawn (fresh smear + split + init, not just weight reinit), up to `max_tries_per_replica` **total tries** (default 30 — one initial fit plus up to 29 redraws). If every try is hopeless the ensemble is abandoned: the replicas accepted so far are exported (that compute is not lost), then a `std::runtime_error` is thrown naming the replica, the try count and how many were exported. A short ensemble returned silently would be read downstream as a complete one, so the run fails loudly instead. Populates `m_replicas` (`std::vector<TrainedModel>`, each carrying its own net + min-max scaling + best val loss).
 7. `export_replicas(out_dir, name_prefix)` — writes each trained replica as `<name_prefix><NN>.json` (same format as `cff_model.json`, via a `net`/scaling-parameterized overload of `export_model_json()`), for out-of-process (Python) mean ± σ CFF bands. **Deletes any pre-existing `<name_prefix>*.json` in `out_dir` first**, so the directory always describes the run that just finished — otherwise a shorter ensemble (10 replicas, then 5) or an aborted one leaves stale files that a `glob` in the plotting code reads as part of the current set. Nothing is deleted when there is nothing to write, so a run that fails before its first replica leaves the previous ensemble intact. See 2026-09-01 and 2026-09-18 session notes.
 
@@ -834,3 +834,32 @@ For comparison, Gepard (`fitter_vectloss.py`) has two policies and neither match
 `main()` catches the exception, logs it through PARTONS' logger and falls through to `return 0`, so a failed run reports success to the shell — SWIF/Slurm marks the job succeeded, and `./bin/Run_CFF_NN_Fit && …` continues onto an incomplete ensemble. The farm `.out` file does end with the `[ERROR] (main::main) Replica N still hopeless …` line (two lines above `Total run time`), so a human reading the log sees it; automation does not.
 
 Fix when convenient: an `int exit_code` set to 1 in both catch blocks and returned at the end — keeping the timing print, and incidentally removing the double `pPartons->close()` that the error path currently performs (once in the catch, once after the try/catch).
+
+
+---
+
+## Session notes (2026-09-21, later)
+
+### The dataset scan, and what it found about GL-10
+
+`observ_calc_scalar_cff()` was extended from one hand-picked kinematic to **every point of the input file**, with the torch side driven through `computeManyKinematicTorch` (so N>1, exercising the batched `[N,M]` broadcast that every other check leaves at N=1).
+
+First full-dataset result, native scalar BMJ12 vs torch batched BMJ12 with identical constant CFFs: most points agree to ~1e-5 relative, but **the worst reaches 4.2e-4** — far above the 3.4e-6 the 2026-06-22 note recorded when GL-10 was validated at a single point.
+
+Rather than assume that was quadrature, it was measured by raising the torch integrator order and re-running the scan:
+
+| torch φ-integrator | max relative deviation |
+|---|---|
+| GL-10 (the default) | 4.2e-4 |
+| GL-20 | 1.2e-8 |
+| GL-40 | 1.8e-13 |
+| GL-80 | 1.7e-13 (double-precision floor) |
+
+So the residual is **entirely GL-10's φ-quadrature error**, and the two independent BMJ12 implementations agree to ~2e-13 once φ is resolved. That is the strongest validation the torch port has: sixteen kinematics, no shared code between the two sides beyond four constant numbers.
+
+Two consequences worth acting on:
+
+- **The 2026-06-22 conclusion that "GL-10 reproduces DEXP to ~6 sig figs" was a single-point measurement and does not hold across the dataset** — it is ~3.4 sig figs at the worst point here. Still far below the data's own precision (σ/y ≈ 6%), so no fit result is affected, but the margin is 100× smaller than advertised.
+- **Raising the default order is probably close to free.** The 2026-09-15 timing showed batched cost is dominated by the fixed per-operation overhead, not by element count (0.605 s at N=16 vs 0.553 s at N=160) — and M enters the same way N does, as elements of the `[N,M]` tensors. GL-20 or GL-40 would buy 4 to 9 orders of magnitude of quadrature accuracy for what is likely an unmeasurable cost. **Not changed** — it is a physics-facing default and the timing was not measured, so it is left for a deliberate decision.
+
+Note `integrateTorchBatch` supports **fixed rules only** — DEXP is rejected — so the batched path cannot simply adopt the scalar integrator; raising the GL order is the available lever.

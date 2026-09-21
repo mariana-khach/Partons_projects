@@ -665,8 +665,6 @@ void CFF_NN_Fitter::observ_calc_scalar_cff() {
         return pMod;
     };
 
-    DVCSObservableKinematic dvcsKinematics(0.2, -0.2, 2., 5.932, 6.);
-
     // ---- Path A: PARTONS native scalar chain ------------------------------
     DVCSConvolCoeffFunctionModule* pCFFScalarA = makeConstantCFFModule();
 
@@ -687,11 +685,6 @@ void CFF_NN_Fitter::observ_calc_scalar_cff() {
     pProcessA->setScaleModule(pScalesA);
     pProcessA->setConvolCoeffFunctionModule(pCFFScalarA);
     pObsA->setProcessModule(pProcessA);
-
-    DVCSObservableResult resultA =
-            Partons::getInstance()->getServiceObjectRegistry()->getDVCSObservableService()->computeSingleKinematic(
-                    dvcsKinematics, pObsA);
-    const double valueNative = resultA.getValue().getValue();
 
     // ---- Path B: the same model through the tensor chain ------------------
     DVCSConvolCoeffFunctionModule* pCFFScalarB = makeConstantCFFModule();
@@ -725,18 +718,85 @@ void CFF_NN_Fitter::observ_calc_scalar_cff() {
                             "DVCSObservableServiceTorch"));
     DVCSObservableTorch* pObsTorchB = dynamic_cast<DVCSObservableTorch*>(pObsB);
 
-    torch::Tensor resultTensor =
-            pServiceTorch->computeSingleKinematicTorch(dvcsKinematics, pObsTorchB);
-    const double valueTorch = resultTensor.item<double>();
+    // ---- Scan the dataset's kinematics ------------------------------------
+    // Every point of the input file, not one hand-picked kinematic: a
+    // coefficient error that only bites at large |t| or small xB has nowhere to
+    // hide. The torch side goes through computeManyKinematicTorch, so this also
+    // exercises the batched [N,M] path -- every other verification in this file
+    // runs at N=1, where a broadcasting mistake would not show.
+    auto [X, E_data, phi_data, y_obs, sigma] = load_data_observable();
+    const int N = static_cast<int>(X.size(0));
+
+    PARTONS::List<DVCSObservableKinematic> kinematics;
+    for (int i = 0; i < N; ++i) {
+        kinematics.add(DVCSObservableKinematic(X[i][0].item<double>(),
+                X[i][1].item<double>(), X[i][2].item<double>(),
+                E_data[i].item<double>(), phi_data[i].item<double>()));
+    }
+
+    // Torch: one batched call for all N points.
+    torch::Tensor torchValues =
+            pServiceTorch->computeManyKinematicTorch(kinematics, pObsTorchB);
+
+    // Native: PARTONS has no batched entry point that keeps per-point values
+    // here, so loop the scalar service.
+    std::vector<double> nativeValues(N);
+    for (int i = 0; i < N; ++i) {
+        nativeValues[i] =
+                Partons::getInstance()->getServiceObjectRegistry()->getDVCSObservableService()->computeSingleKinematic(
+                        kinematics[i], pObsA).getValue().getValue();
+    }
 
     std::cout << "\nScalar-CFF differential test (DVCSCFFConstant, no network)\n";
-    std::cout << "Kinematics: xB=0.2, t=-0.2, Q2=2, E=5.932\n";
-    std::cout << "  native scalar BMJ12 = " << valueNative << "\n";
-    std::cout << "  torch batched BMJ12 = " << valueTorch << "\n";
-    std::cout << "  difference          = " << (valueTorch - valueNative) << "\n";
-    std::cout << "  requires_grad       = "
-            << (resultTensor.requires_grad() ? "true" : "false")
+    std::cout << "  native scalar BMJ12 vs torch batched BMJ12 over "
+              << N << " dataset points\n\n";
+    std::cout << "    xB        t        Q2       E        native       torch"
+                 "        abs diff    rel diff\n";
+
+    double maxAbs = 0., maxRel = 0.;
+    int maxRelPoint = 0;
+    for (int i = 0; i < N; ++i) {
+        const double nat = nativeValues[i];
+        const double tor = torchValues[i].item<double>();
+        const double absDiff = std::fabs(tor - nat);
+        const double relDiff = (nat != 0.) ? absDiff / std::fabs(nat) : 0.;
+
+        if (absDiff > maxAbs) maxAbs = absDiff;
+        if (relDiff > maxRel) { maxRel = relDiff; maxRelPoint = i; }
+
+        std::cout << std::fixed << std::setprecision(4)
+                  << "  " << std::setw(7) << X[i][0].item<double>()
+                  << "  " << std::setw(7) << X[i][1].item<double>()
+                  << "  " << std::setw(7) << X[i][2].item<double>()
+                  << "  " << std::setw(7) << E_data[i].item<double>()
+                  << std::scientific << std::setprecision(6)
+                  << "  " << std::setw(13) << nat
+                  << "  " << std::setw(13) << tor
+                  << "  " << std::setw(11) << absDiff
+                  << "  " << std::setw(11) << relDiff << "\n";
+    }
+    std::cout << std::defaultfloat;
+
+    std::cout << "\n  max |diff|     = " << maxAbs << "\n";
+    std::cout << "  max rel |diff| = " << maxRel << "  (point " << maxRelPoint
+              << ": xB=" << X[maxRelPoint][0].item<double>()
+              << ", t=" << X[maxRelPoint][1].item<double>()
+              << ", Q2=" << X[maxRelPoint][2].item<double>() << ")\n";
+    std::cout << "  requires_grad  = "
+            << (torchValues.requires_grad() ? "true" : "false")
             << " (expected false: constant CFFs carry no graph)\n";
+    // What to expect, measured 2026-09-21 on this dataset: the residual is the
+    // torch side's fixed GL-10 phi-quadrature against the scalar side's
+    // adaptive DEXP -- NOT a difference in the BMJ12 transcription. Raising the
+    // torch integrator order collapses it, which is how that was established:
+    //   GL-10 -> 4.2e-4 | GL-20 -> 1.2e-8 | GL-40 -> 1.8e-13 | GL-80 -> 1.7e-13
+    // i.e. the two independent implementations agree to double precision once
+    // phi is resolved. A rise ABOVE ~1e-3 here, or a max that does not fall
+    // when the order is raised, means something real has broken.
+    std::cout << "  Expect <= ~5e-4 relative at GL-10 (this is phi-quadrature "
+                 "error, not a physics difference):\n"
+                 "    raising the torch integrator order collapses it "
+                 "(GL-20 ~1e-8, GL-40 ~2e-13).\n";
 }
 
 void CFF_NN_Fitter::observ_calc_torch() {
