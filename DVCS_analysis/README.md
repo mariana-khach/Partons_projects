@@ -411,7 +411,7 @@ integrand.
 
 | Speedup | Status | What it does |
 |---|---|---|
-| **Fixed GL-10 integrator** (was DEXP) | ✅ done (2026-06-23) | One batched φ-integrand evaluation instead of DEXP's adaptive `L+1` levels (per A_LU computation) |
+| **Fixed GL integrator** (was DEXP) | ✅ done (2026-06-23; order raised 10 → 20 on 2026-09-21) | One batched φ-integrand evaluation instead of DEXP's adaptive `L+1` levels (per A_LU computation) |
 | **Hoist setup — #1** (prepare/assemble split) | ✅ done (2026-06-25) | The φ- and helicity-independent kinematic factors + CFFs are computed **once per kinematic point** instead of once per beam helicity (twice) |
 | **Batch across data points — #3** (vectorization) | ✅ done (2026-09-15) | The per-point loop is gone: `[N]` kinematics, one `[N,3]` NN forward, `[N,M]` cross-sections, one `backward()` per epoch |
 | **Multithread the per-point loop — #4** | ➖ moot | Superseded by #3 — no per-point loop remains to thread (and it would have carried shared-`.grad` races) |
@@ -765,7 +765,7 @@ torch integrator order and re-running the scan:
 
 | torch φ-integrator | max relative deviation |
 |---|---|
-| GL-10 (default) | 4.2×10⁻⁴ |
+| GL-10 (the default at the time) | 4.2×10⁻⁴ |
 | GL-20 | 1.2×10⁻⁸ |
 | GL-40 | 1.8×10⁻¹³ |
 | GL-80 | 1.7×10⁻¹³ (double-precision floor) |
@@ -774,8 +774,19 @@ So the two independent BMJ12 transcriptions agree to ~2×10⁻¹³ once φ is re
 validation the torch port has had.  It also corrects the 2026-06-22 claim that GL-10 reproduces
 DEXP to ~6 significant figures: that was one kinematic point, and across the dataset it is ~3.4.
 Still far below the data's own 6% precision, so no fit result is affected — but the margin is
-100× smaller than advertised, and raising the default order is likely near-free given that
-batched cost is dominated by per-operation overhead rather than element count.
+100× smaller than advertised.
+
+**The default was therefore raised to GL-20** (2026-09-21), moving the worst-case agreement to
+~1.2×10⁻⁸ for twice the φ nodes.  Not GL-40: at GL-20 the quadrature residual already sits ~5
+orders of magnitude below the data's own 6% precision, so further nodes buy nothing observable.
+The per-epoch cost was not measured in a controlled benchmark — the expectation is that it is
+nearly free, since batched cost tracks operation count rather than element count and M enters the
+`[N,M]` tensors exactly as N does.
+
+A side effect worth knowing: the three `observ_calc*` paths now agree to **every printed digit**
+(0.133156 / 0.133156 / 0.133156).  The 6th-significant-digit spread that these notes have
+attributed to "the GL-vs-DEXP gap" since 2026-06-22 was never a floor — it was GL-10's quadrature
+error, and it vanishes once φ is resolved.
 
 Two things `DVCSCFFConstant` taught us, both now in comments: the native BMJ12 process requests
 **every** GPD type the module advertises — transversity, twist-3, even the DDVCS `HL` — and
@@ -819,11 +830,10 @@ twist-2 entries; those zeros are also exactly what the torch port assumes.
   continues onto an incomplete ensemble.  The `.out` file does end with the
   `[ERROR] (main::main) Replica N still hopeless …` line, so a human reading the log sees it.
   Fix: an `int exit_code` set in both catch blocks and returned at the end.
-- **GL-10 is under-resolved for the φ-moment** — the dataset scan measures up to 4.2×10⁻⁴
-  relative error against adaptive DEXP, versus ~10⁻⁸ at GL-20 and ~10⁻¹³ at GL-40.  Harmless for
-  fitting (the data carry ~6% errors) but the accuracy is nearly free to recover, and
-  `integrateTorchBatch` supports fixed rules only, so raising the order is the available lever.
-  Left unchanged pending a deliberate decision and a timing measurement.
+- **φ-quadrature order was raised 10 → 20** (2026-09-21), taking the worst-case deviation from
+  adaptive DEXP from 4.2×10⁻⁴ to ~1.2×10⁻⁸.  What remains open is only the timing: the per-epoch
+  cost of the extra nodes has not been measured in a controlled benchmark, just argued from the
+  batched-cost scaling.
 
 ---
 

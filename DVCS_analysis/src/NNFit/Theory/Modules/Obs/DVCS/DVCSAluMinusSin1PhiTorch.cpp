@@ -14,11 +14,20 @@ const unsigned int DVCSAluMinusSin1PhiTorch::classId =
 
 DVCSAluMinusSin1PhiTorch::DVCSAluMinusSin1PhiTorch(const std::string& className) :
         DVCSAluMinusTorch(className), MathIntegratorModuleTorch() {
-    // Fixed 10-point Gauss-Legendre over phi in [0, 2pi]. The A_LU^{sin1phi}
+    // Fixed-order Gauss-Legendre over phi in [0, 2pi]. The A_LU^{sin1phi}
     // integrand is smooth and 2pi-periodic, so a fixed rule is one batched
-    // integrand evaluation (vs DEXP's adaptive multi-level), at the cost of a
-    // tiny quadrature difference vs the scalar adaptive path.
-    MathIntegratorModuleTorch::setIntegrator(NumA::IntegratorType1D::GL, 10);
+    // integrand evaluation (vs DEXP's adaptive multi-level, which
+    // integrateTorchBatch does not support at all).
+    //
+    // 20 nodes, not 10. The dataset scan in observ_calc_scalar_cff() measured
+    // GL-10 against the scalar path's adaptive DEXP over every kinematic point
+    // of the input file and found up to 4.2e-4 relative error -- 100x worse
+    // than the single-point check of 2026-06-22 suggested. Order convergence
+    // (GL-10 4.2e-4, GL-20 1.2e-8, GL-40 1.8e-13, GL-80 at the double-precision
+    // floor) identifies that residual as pure quadrature error, so the fix is
+    // simply more nodes. GL-20 buys ~4 orders of magnitude; the remaining gap
+    // is far below anything the fit can see.
+    MathIntegratorModuleTorch::setIntegrator(NumA::IntegratorType1D::GL, 20);
 }
 
 DVCSAluMinusSin1PhiTorch::DVCSAluMinusSin1PhiTorch(

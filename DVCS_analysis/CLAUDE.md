@@ -85,7 +85,7 @@ A **fully differentiable** DVCS observable chain that runs *inside* the PARTONS 
 **Per-class-parallel observable leaves** (mirror scalar `DVCSAluMinus` → `DVCSAluMinusSin1Phi`):
 
 - **`DVCSAluMinusTorch`** (`Modules/Obs/DVCS/`) — `public PARTONS::DVCSAluMinus, public DVCSObservableTorch`. Owns the reusable pointwise asymmetry `aLUTensorBatch(xB, t, Q2, E, φ[M]) = (σ⁺−σ⁻)/(σ⁺+σ⁻)`, `[N,M]` (cross-casts `m_pProcessModule` to `DVCSProcessModuleTorch*`). It calls `prepareTensorBatch` **once**, then the lightweight `crossSectionTensorBatch(±1, −1, φ)` per helicity — so the helicity-independent setup (NN forward + BMJ12 kinematics + 72 coeffs) runs once per batch instead of twice. ⚠️ Its own leaf hooks are **not implemented**: `computeTensorImplBatch` throws (a real pointwise version needs an own-φ `[N]` broadcast — see the 2026-09-15 open task), and `computeTensorImpl` is a thin N=1 wrapper over it, so it throws too. Consequently the inherited scalar `computeObservable` (which wraps `computeTensor().item()`) also throws for a **bare** `DVCSAluMinusTorch` — only its moment subclasses are usable. Nothing instantiates it today.
-- **`DVCSAluMinusSin1PhiTorch`** — `public DVCSAluMinusTorch, public MathIntegratorModuleTorch`. The only observable leaf actually wired anywhere. `computeTensorImplBatch` = the sin(1φ) Fourier moment of the inherited `aLUTensorBatch` via `integrateTorchBatch` (fixed GL-10, see 2026-06-22 #2); `computeTensorImpl` is a thin N=1 wrapper around it (wraps the single kinematic into a one-element `List<K>`). No diamond (single path to `PARTONS::DVCSAluMinus`; the integrator is a pure mixin). A future `DVCSAluMinusCos0PhiTorch` derives the same way and reuses `aLUTensorBatch`.
+- **`DVCSAluMinusSin1PhiTorch`** — `public DVCSAluMinusTorch, public MathIntegratorModuleTorch`. The only observable leaf actually wired anywhere. `computeTensorImplBatch` = the sin(1φ) Fourier moment of the inherited `aLUTensorBatch` via `integrateTorchBatch` (fixed **GL-20** — raised from 10 on 2026-09-21 after the dataset scan measured GL-10 at up to 4.2e-4 relative against the scalar DEXP path; see that session's notes); `computeTensorImpl` is a thin N=1 wrapper around it (wraps the single kinematic into a one-element `List<K>`). No diamond (single path to `PARTONS::DVCSAluMinus`; the integrator is a pure mixin). A future `DVCSAluMinusCos0PhiTorch` derives the same way and reuses `aLUTensorBatch`.
 
 **`DVCSProcessBMJ12Torch`** (`Modules/Processes/DVCS/`) — `public PARTONS::DVCSProcessBMJ12, public DVCSProcessModuleTorch`. Overrides the three batched sub-process atoms (BMJ12 in `float64` tensors; kinematics as no-grad `[N]` tensors, CFF-bilinear/linear layers in-graph) + `setupKinematicsTorchBatch` (φ-independent BMJ12 quantities, 72 angular coeffs, one batched NN forward caching the CFF tensors). Unpolarized target only.
 
@@ -863,3 +863,20 @@ Two consequences worth acting on:
 - **Raising the default order is probably close to free.** The 2026-09-15 timing showed batched cost is dominated by the fixed per-operation overhead, not by element count (0.605 s at N=16 vs 0.553 s at N=160) — and M enters the same way N does, as elements of the `[N,M]` tensors. GL-20 or GL-40 would buy 4 to 9 orders of magnitude of quadrature accuracy for what is likely an unmeasurable cost. **Not changed** — it is a physics-facing default and the timing was not measured, so it is left for a deliberate decision.
 
 Note `integrateTorchBatch` supports **fixed rules only** — DEXP is rejected — so the batched path cannot simply adopt the scalar integrator; raising the GL order is the available lever.
+
+### Default raised to GL-20
+
+Taken: `DVCSAluMinusSin1PhiTorch`'s constructor now selects `GL, 20`. That moves the worst-case agreement with PARTONS' native BMJ12 from 4.2e-4 to ~1.2e-8 — four orders of magnitude, for twice the φ nodes.
+
+Why 20 and not 40: 20 already puts the quadrature residual ~5 orders of magnitude below the data's own precision (σ/y ≈ 6%), so 40 would buy nothing observable. The per-epoch cost was **not** measured in a controlled benchmark; the expectation is that it is nearly free (the 2026-09-15 timing showed batched cost tracks operation count rather than element count, and M enters the `[N,M]` tensors the same way N does), and a full pipeline run at GL-20 is the sanity check on that.
+
+Verified on a full run at GL-20:
+
+| check | GL-10 | GL-20 |
+|---|---|---|
+| dataset scan, max relative deviation | 4.2e-4 | **1.2e-8** |
+| three-path `observ_calc*` agreement | last printed digit differed (e.g. 0.145646 / 0.145647) | **identical to every printed digit** (0.133156 / 0.133156 / 0.133156) |
+
+That second row is worth noting: the "6th-significant-digit spread" the session notes have been explaining away as the GL-vs-DEXP gap since 2026-06-22 is simply **gone**. It was never a floor — it was GL-10's error, and it disappears when φ is resolved.
+
+The 2026-06-22 notes keep the original GL-10 numbers as written — that measurement was correct for the single kinematic point it used.
