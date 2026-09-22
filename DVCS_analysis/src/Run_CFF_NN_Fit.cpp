@@ -5,6 +5,11 @@
 #include <ElementaryUtils/logger/CustomException.h>
 #include <ElementaryUtils/logger/LoggerManager.h>
 #include <partons/Partons.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAc.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAcCos0Phi.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAcCos1Phi.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAcCos2Phi.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAcCos3Phi.h>
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAluMinus.h>
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAluPlus.h>
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAluDVCS.h>
@@ -13,6 +18,11 @@
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAluDVCSSin1Phi.h>
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAluIntSin1Phi.h>
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAluIntSin2Phi.h>
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAcTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAcCos0PhiTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAcCos1PhiTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAcCos2PhiTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAcCos3PhiTorch.h"
 #include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusTorch.h"
 #include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluPlusTorch.h"
 #include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluDVCSTorch.h"
@@ -67,6 +77,23 @@ int main(int argc, char** argv) {
                 DVCSAluIntSin1PhiTorch::classId, "DVCSAluIntSin1Phi (moment)");
         fitter.observ_calc_scalar_cff(PARTONS::DVCSAluIntSin2Phi::classId,
                 DVCSAluIntSin2PhiTorch::classId, "DVCSAluIntSin2Phi (moment)");
+
+        // Beam-charge asymmetry family. The pointwise leaf is checked twice:
+        // once at the data file's phi and once with phi swept over [0, 2pi),
+        // because every row of that file carries the same phi and a charge
+        // combination that is wrong elsewhere in phi would otherwise pass.
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSAc::classId,
+                DVCSAcTorch::classId, "DVCSAc (pointwise)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSAc::classId,
+                DVCSAcTorch::classId, "DVCSAc (pointwise, phi swept)", true);
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSAcCos0Phi::classId,
+                DVCSAcCos0PhiTorch::classId, "DVCSAcCos0Phi (average, /2pi)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSAcCos1Phi::classId,
+                DVCSAcCos1PhiTorch::classId, "DVCSAcCos1Phi (moment)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSAcCos2Phi::classId,
+                DVCSAcCos2PhiTorch::classId, "DVCSAcCos2Phi (moment)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSAcCos3Phi::classId,
+                DVCSAcCos3PhiTorch::classId, "DVCSAcCos3Phi (moment)");
 
         // Monte Carlo replica ensemble (smeared pseudodata) for a CFF
         // uncertainty band, alongside the central fit above.

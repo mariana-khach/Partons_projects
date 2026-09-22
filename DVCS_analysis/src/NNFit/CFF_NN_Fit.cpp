@@ -14,6 +14,7 @@
 #include "../../include/NNFit/Theory/Modules/Services/DVCS/DVCSObservableServiceTorch.h"
 
 #include <partons/beans/List.h>
+#include <partons/FundamentalPhysicalConstants.h>
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
 #include <partons/beans/observable/ObservableResult.h>
 #include <partons/beans/PerturbativeQCDOrderType.h>
@@ -628,7 +629,7 @@ void CFF_NN_Fitter::observ_calc() {
 }
 
 void CFF_NN_Fitter::observ_calc_scalar_cff(unsigned int nativeClassId,
-        unsigned int torchClassId, const std::string& label) {
+        unsigned int torchClassId, const std::string& label, bool spread_phi) {
 
     using namespace PARTONS;
 
@@ -742,11 +743,21 @@ void CFF_NN_Fitter::observ_calc_scalar_cff(unsigned int nativeClassId,
     auto [X, E_data, phi_data, y_obs, sigma] = load_data_observable();
     const int N = static_cast<int>(X.size(0));
 
+    // With spread_phi the phi column is replaced by an even sweep of [0, 2pi)
+    // -- see the header comment: every row of the current data file carries the
+    // same phi, which leaves a pointwise leaf tested at a single angle.
+    std::vector<double> phiUsed(N);
+    for (int i = 0; i < N; ++i) {
+        phiUsed[i] = spread_phi
+                ? 2. * PARTONS::Constant::PI * (i + 0.5) / N
+                : phi_data[i].item<double>();
+    }
+
     PARTONS::List<DVCSObservableKinematic> kinematics;
     for (int i = 0; i < N; ++i) {
         kinematics.add(DVCSObservableKinematic(X[i][0].item<double>(),
                 X[i][1].item<double>(), X[i][2].item<double>(),
-                E_data[i].item<double>(), phi_data[i].item<double>()));
+                E_data[i].item<double>(), phiUsed[i]));
     }
 
     // Torch: one batched call for all N points.
@@ -766,8 +777,11 @@ void CFF_NN_Fitter::observ_calc_scalar_cff(unsigned int nativeClassId,
               << label << "\n";
     std::cout << "  native scalar BMJ12 vs torch batched BMJ12 over "
               << N << " dataset points\n\n";
-    std::cout << "    xB        t        Q2       E        native       torch"
-                 "        abs diff    rel diff\n";
+    if (spread_phi)
+        std::cout << "  phi swept over [0, 2pi) instead of the data file's "
+                     "single value\n";
+    std::cout << "    xB        t        Q2       E       phi       native   "
+                 "     torch        abs diff    rel diff\n";
 
     // A relative difference is meaningless where the observable vanishes, and
     // several DVCS observables vanish identically for a given CFF
@@ -798,6 +812,7 @@ void CFF_NN_Fitter::observ_calc_scalar_cff(unsigned int nativeClassId,
                   << "  " << std::setw(7) << X[i][1].item<double>()
                   << "  " << std::setw(7) << X[i][2].item<double>()
                   << "  " << std::setw(7) << E_data[i].item<double>()
+                  << "  " << std::setw(7) << phiUsed[i]
                   << std::scientific << std::setprecision(6)
                   << "  " << std::setw(13) << nat
                   << "  " << std::setw(13) << tor
@@ -823,21 +838,60 @@ void CFF_NN_Fitter::observ_calc_scalar_cff(unsigned int nativeClassId,
             << " (expected false: constant CFFs carry no graph)\n";
     // What to expect depends on which kind of leaf is under test:
     //
-    //   Fourier moment  -- the residual is the torch side's fixed GL rule
-    //                      against the scalar side's adaptive DEXP. Measured
-    //                      2026-09-21: GL-10 4.2e-4, GL-20 1.2e-8, GL-40
-    //                      1.8e-13, i.e. it collapses with the order, which is
-    //                      how it was identified as quadrature error and not a
-    //                      difference in the BMJ12 transcription.
     //   pointwise       -- no phi integration at all, so nothing but
     //                      floating-point rounding order: ~1e-15.
+    //   Fourier moment  -- at GL-40 the torch side's own quadrature error is
+    //                      spent (GL-10 4.2e-4, GL-20 1.2e-8, GL-40 1.8e-13,
+    //                      GL-80 no further gain), so what is left is the
+    //                      SCALAR side's DEXP, which for these integrands is
+    //                      the LESS accurate of the two. Typically ~1e-12, but
+    //                      it varies erratically with kinematics: measured
+    //                      2026-09-22 on the A_C family, 15 of 16 dataset
+    //                      points sit at ~1e-11 while one reaches 1.4e-6.
     //
-    // A rise well above those, or a moment residual that does NOT fall when the
-    // integrator order is raised, means something real has broken.
-    std::cout << "  Expect ~1e-8 relative for a Fourier moment (GL-20 "
-                 "phi-quadrature vs the scalar path's adaptive DEXP),\n"
-                 "    and ~1e-15 for a pointwise observable, which integrates "
-                 "nothing.\n";
+    // That last case is why an outlier here is NOT by itself a bug report.
+    //
+    // Why DEXP is the weaker side, since that is the opposite of what
+    // "adaptive beats fixed-order" suggests. PARTONS never calls
+    // setTolerances(), so the integrator's absolute tolerance is its default
+    // 0.0; DExpIntegrator1D's convergence test (errorEstimate < 0.1 * target)
+    // can then never be satisfied, so every call runs to the end of its node
+    // table and logs "Cannot reach tolerances !" -- 10 such warnings per run of
+    // this executable. DEXP is tanh-sinh, built for ENDPOINT SINGULARITIES: it
+    // clusters nodes double-exponentially at the ends and samples the interior
+    // sparsely. A smooth 2pi-periodic asymmetry has no endpoint singularity and
+    // all its structure in the interior, which is the case Gauss-Legendre and
+    // the trapezoid rule converge exponentially on. So DEXP is simply the wrong
+    // rule here, not a rule that stopped early.
+    //
+    // How to tell a scalar-side residual from a real bug -- the procedure used
+    // on the A_C family, in increasing order of strength:
+    //
+    //   1. raise our GL order (40 -> 80 -> 160). If the residual falls, it was
+    //      ours. If it is flat, our side has converged;
+    //   2. re-run the moment under a DIFFERENT quadrature family (TRAPEZOIDAL,
+    //      which MathIntegratorModuleTorch also supports). Mutual agreement
+    //      within one family can hide a shared bias; agreement across families
+    //      cannot. TRAPEZOIDAL-64 reproduced GL-40 to every printed digit on
+    //      both A_C outliers (9.91435e-08 and 1.43963e-06);
+    //   3. integrate PARTONS' OWN pointwise observable over phi with a
+    //      high-order GL rule and compare against PARTONS' own DEXP moment
+    //      class. No torch code participates, so whatever that reproduces
+    //      belongs to the scalar side. It reproduced every A_C moment residual
+    //      to six digits (e.g. 1.43964195e-06 vs 1.439642e-06).
+    //
+    // Also note a pointwise leaf scanned over the dataset is only as good as
+    // the phi column: pass spread_phi = true, or it is one angle. See the
+    // header.
+    //
+    // A pointwise residual well above 1e-15, or a moment residual that falls
+    // when OUR order is raised, means something real has broken.
+    std::cout << "  Expect ~1e-15 relative for a pointwise observable (it "
+                 "integrates nothing), and ~1e-12\n"
+                 "    for a Fourier moment -- where the residual is the SCALAR "
+                 "side's adaptive DEXP,\n"
+                 "    not our GL-40, so an isolated point may sit far higher "
+                 "(up to ~1e-6 seen).\n";
 }
 
 void CFF_NN_Fitter::observ_calc_torch() {

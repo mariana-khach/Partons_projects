@@ -100,9 +100,18 @@ public:
     // the kinematics differently: a moment integrates phi away, while a
     // pointwise leaf evaluates at each point's own phi, so for the latter the
     // phi column of the data file is what is being tested.
+    //
+    // spread_phi exists because of that last sentence: the current data file
+    // carries the SAME phi in every row, so a pointwise leaf scanned over the
+    // dataset is tested at exactly one phi and a formula that is wrong
+    // elsewhere in phi passes. With spread_phi = true the kinematics keep their
+    // (xB, t, Q2, E) but phi is replaced by an even sweep of [0, 2pi), which
+    // costs nothing and closes the hole. It is a no-op for a moment leaf, which
+    // ignores the stored phi.
     void observ_calc_scalar_cff(unsigned int nativeClassId = 0,
             unsigned int torchClassId = 0,
-            const std::string& label = "DVCSAluMinusSin1Phi (sin1phi moment)");
+            const std::string& label = "DVCSAluMinusSin1Phi (sin1phi moment)",
+            bool spread_phi = false);
 
     // Train n_replicas independent fits to Monte-Carlo-smeared pseudodata
     // (y_smeared = y_obs + N(0, sigma), same formula/independence as Gepard's
