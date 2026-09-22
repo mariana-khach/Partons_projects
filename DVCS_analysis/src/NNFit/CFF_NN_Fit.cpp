@@ -8,6 +8,7 @@
 #include "../../include/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFScalarTorch.h"
 #include <partons/modules/convol_coeff_function/DVCS/DVCSCFFConstant.h>
 #include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSObservableTorch.h"
+#include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusTorch.h"
 #include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.h"
 #include "../../include/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.h"
 #include "../../include/NNFit/Theory/Modules/Services/DVCS/DVCSObservableServiceTorch.h"
@@ -16,6 +17,7 @@
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
 #include <partons/beans/observable/ObservableResult.h>
 #include <partons/beans/PerturbativeQCDOrderType.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAluMinus.h>
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAluMinusSin1Phi.h>
 #include <partons/modules/process/DVCS/DVCSProcessBMJ12.h>
 #include <partons/modules/scales/DVCS/DVCSScalesQ2Multiplier.h>
@@ -625,9 +627,15 @@ void CFF_NN_Fitter::observ_calc() {
     std::cout << "DVCSAluMinusSin1Phi = " << result << "\n";
 }
 
-void CFF_NN_Fitter::observ_calc_scalar_cff() {
+void CFF_NN_Fitter::observ_calc_scalar_cff(unsigned int nativeClassId,
+        unsigned int torchClassId, const std::string& label) {
 
     using namespace PARTONS;
+
+    // Defaults cannot name the classIds in the header (they are not constant
+    // expressions), so resolve them here.
+    if (nativeClassId == 0) nativeClassId = DVCSAluMinusSin1Phi::classId;
+    if (torchClassId == 0)  torchClassId  = DVCSAluMinusSin1PhiTorch::classId;
 
     // A differential test of the batched BMJ12 port that does NOT involve the
     // network: the same fixed CFFs are pushed through PARTONS' native scalar
@@ -679,7 +687,7 @@ void CFF_NN_Fitter::observ_calc_scalar_cff() {
                     DVCSProcessBMJ12::classId);
     DVCSObservable* pObsA =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
-                    DVCSAluMinusSin1Phi::classId);
+                    nativeClassId);
 
     pProcessA->setXiConverterModule(pXiA);
     pProcessA->setScaleModule(pScalesA);
@@ -711,7 +719,7 @@ void CFF_NN_Fitter::observ_calc_scalar_cff() {
                     DVCSProcessBMJ12Torch::classId);
     DVCSObservable* pObsB =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
-                    DVCSAluMinusSin1PhiTorch::classId);
+                    torchClassId);
 
     pProcessB->setXiConverterModule(pXiB);
     pProcessB->setScaleModule(pScalesB);
@@ -754,7 +762,8 @@ void CFF_NN_Fitter::observ_calc_scalar_cff() {
                         kinematics[i], pObsA).getValue().getValue();
     }
 
-    std::cout << "\nScalar-CFF differential test (DVCSCFFConstant, no network)\n";
+    std::cout << "\nScalar-CFF differential test (DVCSCFFConstant, no network): "
+              << label << "\n";
     std::cout << "  native scalar BMJ12 vs torch batched BMJ12 over "
               << N << " dataset points\n\n";
     std::cout << "    xB        t        Q2       E        native       torch"
@@ -800,10 +809,23 @@ void CFF_NN_Fitter::observ_calc_scalar_cff() {
     // i.e. the two independent implementations agree to double precision once
     // phi is resolved. A rise ABOVE ~1e-3 here, or a max that does not fall
     // when the order is raised, means something real has broken.
-    std::cout << "  Expect <= ~5e-4 relative at GL-10 (this is phi-quadrature "
-                 "error, not a physics difference):\n"
-                 "    raising the torch integrator order collapses it "
-                 "(GL-20 ~1e-8, GL-40 ~2e-13).\n";
+    // What to expect depends on which kind of leaf is under test:
+    //
+    //   Fourier moment  -- the residual is the torch side's fixed GL rule
+    //                      against the scalar side's adaptive DEXP. Measured
+    //                      2026-09-21: GL-10 4.2e-4, GL-20 1.2e-8, GL-40
+    //                      1.8e-13, i.e. it collapses with the order, which is
+    //                      how it was identified as quadrature error and not a
+    //                      difference in the BMJ12 transcription.
+    //   pointwise       -- no phi integration at all, so nothing but
+    //                      floating-point rounding order: ~1e-15.
+    //
+    // A rise well above those, or a moment residual that does NOT fall when the
+    // integrator order is raised, means something real has broken.
+    std::cout << "  Expect ~1e-8 relative for a Fourier moment (GL-20 "
+                 "phi-quadrature vs the scalar path's adaptive DEXP),\n"
+                 "    and ~1e-15 for a pointwise observable, which integrates "
+                 "nothing.\n";
 }
 
 void CFF_NN_Fitter::observ_calc_torch() {

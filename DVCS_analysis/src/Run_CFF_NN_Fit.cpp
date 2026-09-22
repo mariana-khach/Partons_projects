@@ -5,6 +5,8 @@
 #include <ElementaryUtils/logger/CustomException.h>
 #include <ElementaryUtils/logger/LoggerManager.h>
 #include <partons/Partons.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAluMinus.h>
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusTorch.h"
 #include "../include/NNFit/CFF_NN_Fit.h"
 #include <chrono>
 #include <iostream>
@@ -33,6 +35,8 @@ int main(int argc, char** argv) {
         // Network-free differential test of the batched BMJ12 port: fixed CFFs
         // through PARTONS' native process module vs the tensor one.
         fitter.observ_calc_scalar_cff();
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSAluMinus::classId,
+                DVCSAluMinusTorch::classId, "DVCSAluMinus (pointwise, own phi)");
 
         // Monte Carlo replica ensemble (smeared pseudodata) for a CFF
         // uncertainty band, alongside the central fit above.

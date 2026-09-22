@@ -91,8 +91,18 @@ public:
     // the picture: fixed CFFs (DVCSCFFConstant) pushed through PARTONS' native
     // scalar process module and through DVCSProcessBMJ12Torch (via
     // DVCSCFFScalarTorch), so a disagreement can only come from the two
-    // transcriptions of BMJ12. Needs no trained model.
-    void observ_calc_scalar_cff();
+    // transcriptions of BMJ12. Scans every point of the dataset. Needs no
+    // trained model.
+    //
+    // The observable pair is a parameter so any torch leaf can be checked
+    // against the PARTONS class it mirrors -- pass the two classIds and a
+    // label. Defaults to the sin(1phi) moment. Note the two kinds of leaf read
+    // the kinematics differently: a moment integrates phi away, while a
+    // pointwise leaf evaluates at each point's own phi, so for the latter the
+    // phi column of the data file is what is being tested.
+    void observ_calc_scalar_cff(unsigned int nativeClassId = 0,
+            unsigned int torchClassId = 0,
+            const std::string& label = "DVCSAluMinusSin1Phi (sin1phi moment)");
 
     // Train n_replicas independent fits to Monte-Carlo-smeared pseudodata
     // (y_smeared = y_obs + N(0, sigma), same formula/independence as Gepard's

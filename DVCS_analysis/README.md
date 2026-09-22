@@ -683,13 +683,12 @@ for free from ATen's intra-op threading on the batched tensor ops, the path is G
 there are none of the gradient-accumulation races of a hand-threaded per-point loop (option #4,
 never implemented and now moot: there is no per-point loop left to thread).
 
-> **Gap:** `DVCSAluMinusTorch::computeTensorImplBatch` is still a **throwing placeholder**, so
-> a bare `DVCSAluMinusTorch` cannot be used (its scalar `computeObservable` throws too).  Only
-> the moment leaf `DVCSAluMinusSin1PhiTorch` is wired.  A real pointwise implementation needs
-> each of the N kinematics paired with its **own** φ (an `[N]` broadcast), whereas the existing
-> machinery broadcasts φ as an `[M]` axis *shared* across all N points (the `[N,M]` outer
-> product, correct for quadrature over the sin1φ moment but not for raw per-φ data).  This is
-> the work item for the planned raw-per-φ A_LU dataset.
+> **Resolved 2026-09-22.**  `DVCSAluMinusTorch::computeTensorImplBatch` is implemented: the
+> pointwise A_LU(φ) evaluates each kinematic at its **own** φ, by passing φ as `[N,1]` rather
+> than the moment leaves' shared `[M]` grid.  No new machinery was needed — every φ-dependent
+> term already broadcasts `[N,1]` kinematics against whatever shape φ has, so the shape alone
+> selects the mode.  Fully vectorized, and cheaper than a moment (M = 1 instead of 20).  This
+> unblocks the raw-per-φ dataset and the four pointwise A_LU observables.
 
 ---
 

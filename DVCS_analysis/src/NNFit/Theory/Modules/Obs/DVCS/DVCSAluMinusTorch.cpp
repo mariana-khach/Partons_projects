@@ -58,14 +58,39 @@ torch::Tensor DVCSAluMinusTorch::aLUTensorBatch(const torch::Tensor& xB,
 
 torch::Tensor DVCSAluMinusTorch::computeTensorImplBatch(
         const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics) {
-    // See the header doc comment: a correct O(N) implementation needs a
-    // per-point-own-phi broadcasting mode aLUTensorBatch() doesn't have
-    // (it was built for the shared-quadrature-node Fourier-moment case).
-    // Not needed by any current consumer -- DVCSAluMinusSin1PhiTorch
-    // overrides this with the real implementation.
-    throw ElemUtils::CustomException(getClassName(), __func__,
-            "Batched pointwise A_LU is not implemented at this base class; "
-            "use a Fourier-moment leaf (e.g. DVCSAluMinusSin1PhiTorch).");
+
+    // Pointwise A_LU(phi): each kinematic evaluated at ITS OWN phi, unlike the
+    // Fourier-moment leaves which share one quadrature grid across all N points.
+    //
+    // Both cases run through the same aLUTensorBatch(); only phi's shape picks
+    // between them, because every phi-dependent term downstream is built by
+    // broadcasting [N] kinematics (unsqueezed to [N,1]) against whatever shape
+    // phi has:
+    //
+    //   phi as [M]    ->  [N,1] x [M]   -> [N,M]   every point at every node
+    //   phi as [N,1]  ->  [N,1] x [N,1] -> [N,1]   point i at its own phi_i
+    //
+    // So this is one batched evaluation over all N points -- no per-point loop,
+    // and no O(N^2) diagonal extraction from the shared-grid form. It is in fact
+    // cheaper than a moment: the same operation count over M=1 instead of M=20.
+    const size_t N = kinematics.size();
+    std::vector<double> xBVec(N), tVec(N), Q2Vec(N), EVec(N), phiVec(N);
+    for (size_t i = 0; i < N; ++i) {
+        const PARTONS::DVCSObservableKinematic& kin = kinematics[i];
+        xBVec[i]  = kin.getXB().getValue();
+        tVec[i]   = kin.getT().getValue();
+        Q2Vec[i]  = kin.getQ2().getValue();
+        EVec[i]   = kin.getE().getValue();
+        phiVec[i] = kin.getPhi().getValue();   // the moment leaves ignore this
+    }
+    const torch::TensorOptions f64 = torch::TensorOptions().dtype(torch::kFloat64);
+    torch::Tensor xB  = torch::tensor(xBVec, f64);
+    torch::Tensor t   = torch::tensor(tVec, f64);
+    torch::Tensor Q2  = torch::tensor(Q2Vec, f64);
+    torch::Tensor E   = torch::tensor(EVec, f64);
+    torch::Tensor phi = torch::tensor(phiVec, f64).unsqueeze(1); // [N] -> [N,1]
+
+    return aLUTensorBatch(xB, t, Q2, E, phi).squeeze(1); // [N,1] -> [N]
 }
 
 torch::Tensor DVCSAluMinusTorch::computeTensorImpl(

@@ -77,22 +77,19 @@ protected:
             const torch::Tensor& phi);
 
     /**
-     * Batched (N-point) sibling of computeTensorImpl() -- the
-     * ObservableTorch<K> hook (channel-generic List<K>).
+     * Batched (N-point) sibling of computeTensorImpl(): pointwise A_LU(phi)
+     * with each kinematic evaluated at ITS OWN phi.
      *
-     * NOT IMPLEMENTED at this pointwise base -- throws. A meaningful batched
-     * pointwise A_LU would need each of the N kinematics' own phi matched
-     * 1:1 (an [N] phi broadcast), whereas aLUTensorBatch()/
-     * crossSectionTensorBatch() broadcast phi as a [M] axis shared by every
-     * data point (an [N,M] outer product) -- built for the Fourier-moment
-     * leaf (DVCSAluMinusSin1PhiTorch), which integrates every point over the
-     * same quadrature nodes. Reusing it here would need either a new
-     * per-point-phi broadcasting mode or a wasteful O(N^2) diagonal
-     * extraction; skipped since no current consumer needs a batched
-     * pointwise leaf. DVCSAluMinusSin1PhiTorch overrides this with a real,
-     * O(N) implementation reusing aLUTensorBatch() as it was built for.
-     * Kept as a concrete (non-pure) override only so this class -- which
-     * self-registers its own prototype -- remains instantiable.
+     * Shares aLUTensorBatch() with the Fourier-moment leaves; only phi's shape
+     * selects the mode, since every phi-dependent term downstream broadcasts
+     * [N] kinematics (unsqueezed to [N,1]) against whatever phi is:
+     *
+     *   phi [M]    -> [N,M]   every point at every quadrature node (moments)
+     *   phi [N,1]  -> [N,1]   point i at its own phi_i (this)
+     *
+     * One batched evaluation over all N points -- no per-point loop and no
+     * O(N^2) diagonal extraction, which earlier notes assumed would be needed.
+     * Cheaper than a moment: same operation count with M = 1 rather than 20.
      */
     torch::Tensor computeTensorImplBatch(
             const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics)

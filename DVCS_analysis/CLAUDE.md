@@ -95,7 +95,7 @@ A **fully differentiable** DVCS observable chain that runs *inside* the PARTONS 
 
 **Per-class-parallel observable leaves** (mirror scalar `DVCSAluMinus` → `DVCSAluMinusSin1Phi`):
 
-- **`DVCSAluMinusTorch`** (`Modules/Obs/DVCS/`) — `public PARTONS::DVCSAluMinus, public DVCSObservableTorch`. Owns the reusable pointwise asymmetry `aLUTensorBatch(xB, t, Q2, E, φ[M]) = (σ⁺−σ⁻)/(σ⁺+σ⁻)`, `[N,M]` (cross-casts `m_pProcessModule` to `DVCSProcessModuleTorch*`). It calls `prepareTensorBatch` **once**, then the lightweight `crossSectionTensorBatch(±1, −1, φ)` per helicity — so the helicity-independent setup (NN forward + BMJ12 kinematics + 72 coeffs) runs once per batch instead of twice. ⚠️ Its own leaf hooks are **not implemented**: `computeTensorImplBatch` throws (a real pointwise version needs an own-φ `[N]` broadcast — see the 2026-09-15 open task), and `computeTensorImpl` is a thin N=1 wrapper over it, so it throws too. Consequently the inherited scalar `computeObservable` (which wraps `computeTensor().item()`) also throws for a **bare** `DVCSAluMinusTorch` — only its moment subclasses are usable. Nothing instantiates it today.
+- **`DVCSAluMinusTorch`** (`Modules/Obs/DVCS/`) — `public PARTONS::DVCSAluMinus, public DVCSObservableTorch`. Owns the reusable pointwise asymmetry `aLUTensorBatch(xB, t, Q2, E, φ[M]) = (σ⁺−σ⁻)/(σ⁺+σ⁻)`, `[N,M]` (cross-casts `m_pProcessModule` to `DVCSProcessModuleTorch*`). It calls `prepareTensorBatch` **once**, then the lightweight `crossSectionTensorBatch(±1, −1, φ)` per helicity — so the helicity-independent setup (NN forward + BMJ12 kinematics + 72 coeffs) runs once per batch instead of twice. Its leaf hooks **are implemented** as of 2026-09-22: `computeTensorImplBatch` evaluates the pointwise A_LU(φ) at each kinematic's **own** φ, by passing φ as `[N,1]` instead of the moment leaves' shared `[M]` grid — the assembly broadcasts either shape, so no new machinery was needed. `computeTensorImpl` is the usual N=1 wrapper, and the inherited scalar `computeObservable` therefore works too. A bare `DVCSAluMinusTorch` is now a usable observable.
 - **`DVCSAluMinusSin1PhiTorch`** — `public DVCSAluMinusTorch, public MathIntegratorModuleTorch`. The only observable leaf actually wired anywhere. `computeTensorImplBatch` = the sin(1φ) Fourier moment of the inherited `aLUTensorBatch` via `integrateTorchBatch` (fixed **GL-20** — raised from 10 on 2026-09-21 after the dataset scan measured GL-10 at up to 4.2e-4 relative against the scalar DEXP path; see that session's notes); `computeTensorImpl` is a thin N=1 wrapper around it (wraps the single kinematic into a one-element `List<K>`). No diamond (single path to `PARTONS::DVCSAluMinus`; the integrator is a pure mixin). A future `DVCSAluMinusCos0PhiTorch` derives the same way and reuses `aLUTensorBatch`.
 
 **`DVCSProcessBMJ12Torch`** (`Modules/Processes/DVCS/`) — `public PARTONS::DVCSProcessBMJ12, public DVCSProcessModuleTorch`. Overrides the three batched sub-process atoms (BMJ12 in `float64` tensors; kinematics as no-grad `[N]` tensors, CFF-bilinear/linear layers in-graph) + `setupKinematicsTorchBatch` (φ-independent BMJ12 quantities, 72 angular coeffs, one batched NN forward caching the CFF tensors). Unpolarized target only.
@@ -711,7 +711,7 @@ Built clean; ran `Run_CFF_NN_Fit` end-to-end. Training loss reads as a reduced �
 - `hopeless_val_loss = 100.f` / `hopeless_check_epoch = 200` / `max_retries_per_replica = 5` are initial defaults, not yet tuned against the actual observed replica-loss distribution on the 16-point dataset. *(The retry parameter was renamed `max_tries_per_replica` and its default raised to 30 on 2026-09-18, along with the exhaustion policy — see that session's notes. The threshold values still stand as written.)*
 - Per-replica `fit_once` calls are still sequential (no threading); `n_replicas × (1+retries)` full training runs is the dominant cost noted in "Run_CFF_NN_Fit.cpp wiring" above — a candidate for a future speedup pass (independent per-replica RNG/graphs make this an easier parallelization target than the earlier #4 per-point-threading idea, since there's no shared-gradient race: each replica has its own `net`/optimizer end-to-end).
 - `CFF_plots_ALU_2007_xpow_replica_Farm.ipynb` (untracked, in `My_Analysis/Codes/`) appears to be in-progress replica-band plotting work, not yet committed.
-- **(2026-09-15) A future dataset is planned that trains on raw per-phi A_LU directly**, rather than the sin1φ Fourier moment used everywhere today (`DVCSAluMinusSin1PhiTorch`). When that work starts, `DVCSAluMinusTorch::computeTensorImplBatch(List<K>)` (branch `vect_optionA`) needs a real implementation instead of its current throwing placeholder — it needs each of the N kinematics paired with its *own* phi (an `[N]` own-phi broadcast), whereas the existing `aLUTensorBatch`/`crossSectionTensorBatch` machinery broadcasts phi as an `[M]` axis *shared* across all N points (an `[N,M]` outer product, correct for Gauss-Legendre quadrature over the sin1φ moment but not for pointwise data). Plug the new method into the same `...Batch`-suffixed chain (`aLUTensorBatch` → `prepareTensorBatch`/`crossSectionTensorBatch` → `setupKinematicsTorchBatch` → `computeAllCFFsTensorBatch`) that `DVCSAluMinusSin1PhiTorch::computeTensorImplBatch` already uses for the moment case.
+- **(2026-09-15, resolved 2026-09-22) A future dataset is planned that trains on raw per-phi A_LU directly**, rather than the sin1φ Fourier moment. The blocker is gone: `DVCSAluMinusTorch::computeTensorImplBatch(List<K>)` is implemented (see the 2026-09-22 notes). The original description, kept because it explains the shape question — it needs each of the N kinematics paired with its *own* phi (an `[N]` own-phi broadcast), whereas the existing `aLUTensorBatch`/`crossSectionTensorBatch` machinery broadcasts phi as an `[M]` axis *shared* across all N points (an `[N,M]` outer product, correct for Gauss-Legendre quadrature over the sin1φ moment but not for pointwise data). Plug the new method into the same `...Batch`-suffixed chain (`aLUTensorBatch` → `prepareTensorBatch`/`crossSectionTensorBatch` → `setupKinematicsTorchBatch` → `computeAllCFFsTensorBatch`) that `DVCSAluMinusSin1PhiTorch::computeTensorImplBatch` already uses for the moment case.
 
 ---
 
@@ -737,7 +737,7 @@ Confirmed dead before deleting: repo-wide grep found no caller outside the defin
 
 ### Behavioral change: bare `DVCSAluMinusTorch` now throws
 
-`computeTensorImpl` previously worked via `aLUTensor`; it is now a thin N=1 wrapper over `computeTensorImplBatch`, which is still the throwing placeholder. So `computeTensor` **and** the inherited scalar `computeObservable` both throw for a bare `DVCSAluMinusTorch`. Acceptable because nothing instantiates it, and the planned raw-per-φ leaf (2026-09-15 open task) is specified to build on the `…Batch` chain anyway — looping the single-point `aLUTensor` N times would have reinstated exactly the per-point loop the batching work existed to remove. The throw disappears when that leaf gets its own-φ implementation; at that point `DVCSAluMinusTorch` becomes a valid scalar drop-in for A_LU again (N=1 wrapper reproduces pointwise A_LU at the kinematic's stored φ — *provided* the batch hook uses own-φ semantics, not the shared-φ `[N,M]` convention).
+`computeTensorImpl` previously worked via `aLUTensor`; it is now a thin N=1 wrapper over `computeTensorImplBatch`, which is still the throwing placeholder. *(Implemented 2026-09-22 — see that session's notes; the paragraph below describes the state between 2026-09-16 and then.)* So `computeTensor` **and** the inherited scalar `computeObservable` both throw for a bare `DVCSAluMinusTorch`. Acceptable because nothing instantiates it, and the planned raw-per-φ leaf (2026-09-15 open task) is specified to build on the `…Batch` chain anyway — looping the single-point `aLUTensor` N times would have reinstated exactly the per-point loop the batching work existed to remove. The throw disappears when that leaf gets its own-φ implementation; at that point `DVCSAluMinusTorch` becomes a valid scalar drop-in for A_LU again (N=1 wrapper reproduces pointwise A_LU at the kinematic's stored φ — *provided* the batch hook uses own-φ semantics, not the shared-φ `[N,M]` convention).
 
 ### Verification
 
@@ -917,3 +917,38 @@ Two things added earlier the same day broke the chain's governing principle — 
 Also landed: the generic `CFFModuleTorch<K>` template, so every link has a generic template with a channel class under it. Like `ProcessModuleTorch<K>` it carries only a virtual destructor — the PARTONS lifecycle comes from the concrete classes' scalar twin, and the compute signature is channel-specific.
 
 **Verified**, full run: three `observ_calc*` paths identical to every printed digit (0.161506), and the dataset scan reproduces **2.5252e-09 / 1.23111e-08** — bit-for-bit its value from before the rewrite, which is what a pure refactor should look like when the conversion has moved between layers and the adapter arrives through different wiring.
+
+
+---
+
+## Session notes (2026-09-22)
+
+### Pointwise A_LU: the own-φ leaf, implemented
+
+`DVCSAluMinusTorch::computeTensorImplBatch` had thrown since 2026-09-15, on the reasoning that a pointwise batched A_LU needs "a new per-point-phi broadcasting mode or a wasteful O(N^2) diagonal extraction". It needs neither.
+
+Every φ-dependent term in the BMJ12 assembly is built by broadcasting `[N]` kinematics — `unsqueeze(1)` → `[N,1]` — against whatever shape φ has. Nothing assumes φ has length M. So φ's **shape alone** selects the mode:
+
+| φ passed as | broadcast | meaning |
+|---|---|---|
+| `[M]` | `[N,1] × [M] → [N,M]` | every point at every quadrature node — the moment leaves |
+| `[N,1]` | `[N,1] × [N,1] → [N,1]` | point *i* at its own φ_i — pointwise |
+
+The implementation is therefore: unpack `phi[N]` from the kinematic list (the moment leaves deliberately ignore it), `unsqueeze(1)`, call the same `aLUTensorBatch`, `squeeze(1)`. Fully vectorized, no per-point loop, and **cheaper than a moment** — same operation count with M = 1 rather than 20.
+
+This unblocks the planned raw-per-φ dataset and the four pointwise A_LU observables (`DVCSAluMinus`, `AluPlus`, `AluDVCS`, `AluInt`). `CustomLoss` needs no change: φ has been loaded and carried into the kinematics since 2026-06-18 precisely for this.
+
+### The differential test now takes the observable pair as an argument
+
+`observ_calc_scalar_cff(nativeClassId, torchClassId, label)` — so any torch leaf can be checked against the PARTONS class it mirrors by passing two classIds, with no new test code per observable. `main` runs it twice.
+
+**The pointwise result is the strongest verification the torch port has.** Native PARTONS vs torch, identical constant CFFs, all 16 dataset points:
+
+| leaf under test | max relative deviation |
+|---|---|
+| sin(1φ) moment | 1.2e-8 — GL-20 quadrature vs the scalar path's adaptive DEXP |
+| **pointwise, own φ** | **2.6e-15** — most points exactly 0 |
+
+A pointwise observable integrates nothing, so the quadrature difference vanishes and what remains is floating-point rounding order. That isolates the BMJ12 transcription from every other source of disagreement: two independent implementations, agreeing to the last bit, at sixteen kinematic points.
+
+Verified in a full run: the three `observ_calc*` paths agree to every printed digit (0.114756), both differential tests as above, 10 replicas trained and exported, 271 s.
