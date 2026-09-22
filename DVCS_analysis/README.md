@@ -40,20 +40,30 @@ BMJ12 convention (Belitsky, Mueller, Ji — arXiv:1212.6674).
 DVCS_analysis/
 ├── src/                    # All source files (see below)
 │   └── NNFit/              # Neural-network fit subsystem
-│       ├── CFF_NN_Fit.cpp
+│       ├── CFF_NN_Fit.cpp   # CFF_NN_Fitter: train / predict / replicas / verification paths
+│       ├── CustomLoss.cpp   # reduced chi^2/n on the observable, through the tensor chain
 │       ├── NN_Fit.cpp
 │       └── Theory/         # Differentiable physics layer (libtorch + PARTONS subclasses)
-│           ├── Beans/Obs/DVCS/         # DVCSKinematicsTorch.cpp
-│           └── Modules/                # PARTONS-registered tensor modules
-│               ├── CFFs/DVCS/          # DVCSCFFNNTorch.cpp
-│               ├── Processes/DVCS/     # DVCSAmplitudesBMJ12Torch.cpp,
-│               │                       # DVCSProcessBMJ12Torch.cpp
-│               └── Obs/DVCS/           # DVCSAluMinusSin1PhiTorch.cpp
+│           └── Modules/                # PARTONS-registered tensor modules + generic templates
+│               ├── MathIntegratorModuleTorch.cpp
+│               ├── CFFs/DVCS/          # DVCSCFFModuleTorch.h (interface),
+│               │                       # DVCSCFFNNTorch.cpp,
+│               │                       # DVCSCFFScalarTorch.cpp (scalar-model adapter)
+│               ├── Processes/          # ProcessModuleTorch.h (generic)
+│               │   └── DVCS/           # DVCSProcessModuleTorch.h, DVCSProcessBMJ12Torch.cpp
+│               ├── Obs/                # ObservableTorch.h (generic)
+│               │   └── DVCS/           # DVCSObservableTorch.h, DVCSAluMinusTorch.cpp,
+│               │                       # DVCSAluMinusSin1PhiTorch.cpp
+│               └── Services/           # ObservableServiceTorch.h (generic mixin)
+│                   └── DVCS/           # DVCSObservableServiceTorch.cpp
 ├── include/                # Headers mirroring src/
 ├── bin/                    # Compiled executables (CMake output)
 ├── My_Analysis/
-│   ├── Codes/              # Analysis notebooks (plot learning curves, predictions, CFF scans)
+│   ├── Codes/              # Analysis notebooks (learning curves, predictions, CFF scans/bands)
 │   │   ├── CFF_obs_train_predict_plot.ipynb
+│   │   ├── CFF_obs_train_predict_plot_xpow.ipynb
+│   │   ├── CFF_plots_ALU_2007_xpow_replica.ipynb
+│   │   ├── CFF_plots_ALU_2007_xpow_replica_Farm.ipynb
 │   │   └── Obs_NN_train_predict_plot.ipynb
 │   └── Partons_output/     # CSV/JSON output files from fits and predictions
 ├── libtorch/               # Bundled libtorch installation
@@ -63,7 +73,10 @@ DVCS_analysis/
 └── README.md               # This file
 ```
 
-The `NNFit/Theory/` layout mirrors PARTONS' own `Beans/` and `Modules/` directory hierarchy, with `CFFs`, `Processes`, and `Obs` subdivisions matching the three links of the DVCS calculation chain.
+The `NNFit/Theory/` layout mirrors PARTONS' own `Modules/` directory hierarchy, with `CFFs`,
+`Processes`, `Obs`, and `Services` subdivisions matching the links of the DVCS calculation
+chain.  (A `Beans/Obs/DVCS/` directory existed until 2026-06-17 and is gone — see the
+2026-04-24 section below.)
 
 ---
 
@@ -137,20 +150,34 @@ Implements `NN_Fitter`: loads pipe-separated data, builds a `3 → 6(Tanh) → n
 to CSV.  Target labels are CFF values extracted from the data file by column name.
 
 #### `src/Run_CFF_NN_Fit.cpp` — Entry point for the full differentiable pipeline
-Entry point for `Run_CFF_NN_Fit` executable.  Constructs a `CFF_NN_Fitter` with the CLAS15
-BSA dataset, runs the workflow:
-1. `train_nn()` — train NN with χ² loss on the observable (via `CustomLoss`)
-2. `observ_calc()` — compute `DVCSAluMinusSin1Phi` via the PARTONS service using the trained NN
-3. `observ_calc_torch()` — compute the same observable through the PARTONS-tensor module chain (direct `computeTensor`)
-4. `observ_calc_torch_via_service()` — drive the `*Torch` subclasses through the PARTONS service (verification path)
+Entry point for `Run_CFF_NN_Fit` executable.  Constructs a `CFF_NN_Fitter` with the CLAS07
+BSA dataset (`BSA_CLAS_07_KK_format_ALU_error.csv`, 16 points), the output-layer list (e.g.
+`{"ImH"}`) and `x_pow`, then runs the workflow:
+1. `train_nn()` — central fit: train the NN with a reduced-χ²/n loss on the observable (via `CustomLoss`)
+2. `predict()` — evaluate the trained model's observable prediction per point; write `obs_prediction.csv`, `obs_model_eval.csv`, `cff_model.json`
+3. `observ_calc()` — compute `DVCSAluMinusSin1Phi` via the PARTONS service using the trained NN (base PARTONS classes)
+4. `observ_calc_torch()` — the same observable through the PARTONS-tensor module chain (`DVCSObservableServiceTorch::computeSingleKinematicTorch`, gradient preserved)
+5. `observ_calc_torch_scalar()` — drive the `*Torch` subclasses through the *scalar* PARTONS service (verification path; formerly `observ_calc_torch_via_service()`)
+6. `train_replicas(10)` + `export_replicas(OUT_DIR)` — Monte Carlo replica ensemble for the CFF uncertainty band
+
+`main()` also wraps the run in a `std::chrono::steady_clock` measurement and prints
+`Total run time: <s> s` at exit (replica training multiplies the single-fit cost by
+`n_replicas × (1 + retries)`).
 
 #### `src/NNFit/CFF_NN_Fit.cpp` — CFF fitter with full observable pipeline
 Implements `CFF_NN_Fitter`, the central class of the NNFit subsystem:
 
-- **`train_nn()`** — Adam (lr=1e-2, weight_decay=1e-3), raw (unscaled) inputs, early stopping
-  (patience=200, max 10000 epochs) with best-validation parameter restore, writes
-  `cff_learning_curve.csv`. Drives observable training via `CustomLoss` (χ² between
-  predicted A_LU and the data observable).
+- **`train_nn()`** — central (unsmeared) fit.  A thin wrapper over the shared `fit_once()`
+  helper: Adam (lr=1e-2, **no** weight decay since 2026-08-05), raw inputs with the min-max
+  scaling applied *inside* the NN module, early stopping (patience=1000, max 10000 epochs)
+  with best-validation parameter restore, writes `cff_learning_curve.csv`.  Drives observable
+  training via `CustomLoss` (reduced χ²/n between predicted A_LU^{sin1φ} and the measured
+  observable).
+- **`predict()`** — evaluates the trained model's **observable** prediction per data point
+  through the same tensor chain, writes `obs_prediction.csv` (per-point true/pred),
+  `obs_model_eval.csv` (MSE, R², reduced χ²/n) and `cff_model.json`.
+- **`train_replicas()` / `export_replicas()`** — the Monte Carlo replica ensemble
+  (see the 2026-09-01 section below).
 - **`observ_calc()`** — plugs `m_net` into the PARTONS pipeline via `DVCSCFFNNTorch`,
   uses `DVCSProcessBMJ12` + `DVCSScalesQ2Multiplier` (μF²=μR²=Q²) and calls the PARTONS
   observable service to compute `DVCSAluMinusSin1Phi`.
@@ -174,6 +201,13 @@ training targets are defined.
 ---
 
 ### Added after second commit (untracked, 2026-04-24)
+
+> **Removed 2026-06-17** (commit `97c81b4`).  The two files described in this section
+> (`DVCSKinematicsTorch`, `DVCSAmplitudesBMJ12Torch`) were the *standalone* `Theory::`
+> physics layer that bypassed PARTONS.  They were superseded by the in-framework port
+> described from the 2026-06-16 section onwards, where the BMJ12 kinematics and Fourier
+> coefficients live in `DVCSProcessBMJ12Torch::setupKinematicsTorchBatch`.  Kept here as
+> history — neither file exists in the tree today.
 
 #### `src/NNFit/Theory/Beans/Obs/DVCS/DVCSKinematicsTorch.cpp` — Kinematic precomputation (BMJ12)
 Pure-C++ (no torch) computation of all φ-independent kinematic quantities for a given
@@ -298,7 +332,9 @@ so only `KinematicType` is templated):
   `computeSingleKinematicTorch(kin, ObservableTorch<K>*)`, layered onto the existing PARTONS
   service.
 
-**DVCS channel layer** (each twin sits next to its scalar counterpart):
+**DVCS channel layer** (each twin sits next to its scalar counterpart).  *This is the
+2026-06-16 single-kinematic form; for the current batched names see the batching section
+below:*
 
 ```
 ObservableServiceTorch::computeSingleKinematicTorch   ↔  ObservableService::computeSingleKinematic
@@ -368,63 +404,39 @@ integrand.
 
 ---
 
-### Batch computation — PLANNED, NOT YET IMPLEMENTED (branch `6-speedup_via_vectorized_batchobscalc`)
+### Speedup work completed
 
-> **Status:** this section describes *future* design only. Batching across data points is
-> **not implemented**. The training loop still processes data points **one at a time**
-> (`CustomLoss::forward` loops the rows and calls `computeSingleKinematicTorch` per point).
-> The two speedups actually done so far are listed under **"Speedup work completed"** below.
-
-The GL swap (done) is the **prerequisite for vectorizing across data points**.  DEXP's
-refinement level is chosen adaptively *per kinematic point*, so it cannot fit a single
-static `[N, M]` φ grid; a fixed GL rule gives the **same M φ nodes for every point**, which
-is exactly what batching would need.
-
-The (unimplemented) planned design would push the batch dimension **down into the existing
-reusable layers** (rather than a monolithic batch entry point):
-
-- kinematics carried as `[N]` tensors, one `[N,3]` NN forward, cross-sections as `[N,M]`,
-  the φ-integral reduced over the shared grid;
-- a batched sibling method on each module (alongside the scalar virtual and the
-  single-kinematic tensor method) plus a `computeManyKinematicTorch` service driver,
-  mirroring the scalar `computeSingleKinematic ↔ computeManyKinematic` pair;
-- adding a new observable then means writing only its thin batched leaf — everything below
-  is reused.
-
-It would be **data parallelism**: the multicore speedup would come for free from ATen's
-intra-op threading on the batched tensor ops, the graph built once with a **single
-deterministic `backward()`**, and the path GPU-ready — without the gradient-accumulation
-races of a hand-threaded per-point loop.  The work would be purely additive: the scalar
-virtuals and the single-kinematic tensor chain untouched.
-
----
-
-### Speedup work completed (vs. planned)
-
-To be unambiguous about what is actually in the code:
+(#3, batching across data points, landed later — see
+**"Batching across data points"** below.)
 
 | Speedup | Status | What it does |
 |---|---|---|
-| **Fixed GL-10 integrator** (was DEXP) | ✅ **done** | One batched φ-integrand evaluation instead of DEXP's adaptive `L+1` levels (per A_LU computation) |
-| **Hoist setup — #1** (prepare/assemble split) | ✅ **done** | The φ- and helicity-independent kinematic factors + CFFs are computed **once per kinematic point** instead of once per beam helicity (twice) |
-| **Batch across data points (#3 vectorization)** | ❌ **not implemented** | Would replace the per-point loop with `[N,…]` batched tensor ops (design above) |
+| **Fixed GL integrator** (was DEXP) | ✅ done (2026-06-23; order raised 10 → 20 on 2026-09-21) | One batched φ-integrand evaluation instead of DEXP's adaptive `L+1` levels (per A_LU computation) |
+| **Hoist setup — #1** (prepare/assemble split) | ✅ done (2026-06-25) | The φ- and helicity-independent kinematic factors + CFFs are computed **once per kinematic point** instead of once per beam helicity (twice) |
+| **Batch across data points — #3** (vectorization) | ✅ done (2026-09-15) | The per-point loop is gone: `[N]` kinematics, one `[N,3]` NN forward, `[N,M]` cross-sections, one `backward()` per epoch |
+| **Multithread the per-point loop — #4** | ➖ moot | Superseded by #3 — no per-point loop remains to thread (and it would have carried shared-`.grad` races) |
 
-So, concretely, the speedup achieved to date is: (1) the **integrator change**
-(DEXP → fixed 10-point Gauss–Legendre), and (2) computing the **φ- and helicity-independent
-kinematic factors once per kinematic point** (#1). Per-data-point batching is still future
-work; training remains a serial loop over the data points.
+All three implemented speedups are **value-preserving**: the three `observ_calc*` paths agree
+to every printed digit after each of them.
 
 ---
 
 ### Hoist setup — prepare/assemble split (#1, 2026-06-24)
 
-A standalone per-point speedup that also de-risks the batched work above.  The torch
+A standalone per-point speedup that also de-risked the batched work (#3, below).  The torch
 asymmetry `DVCSAluMinusTorch::aLUTensor` evaluates the cross section for **both** beam
 helicities (λ=±1) to form `A_LU = (σ⁺−σ⁻)/(σ⁺+σ⁻)`.  Previously each call re-ran the whole
 φ-independent setup — **one NN forward + the BMJ12 kinematic block + 72 angular
 coefficients** — so that helicity-independent work executed **twice per data point**.  (The
 scalar PARTONS path has the same two-helicity structure but dodges the cost via CFF caching;
 the torch path can't cache without severing the autograd graph, so it hoists instead.)
+
+> **Superseded 2026-09-16:** the single-point API shown in this section
+> (`prepareTensor`, the four `crossSectionTensor` overloads, `setupKinematicsTorch`,
+> `aLUTensor`) was **deleted** once #3 landed — see the last section below.  The
+> prepare/assemble *idea* survives unchanged in the batched twins
+> (`prepareTensorBatch` / `crossSectionTensorBatch` / `setupKinematicsTorchBatch` /
+> `aLUTensorBatch`).  The description below is kept as the rationale for that factoring.
 
 The monolithic `crossSectionTensor` was split into **prepare + assemble** in
 `DVCSProcessModuleTorch`:
@@ -497,8 +509,9 @@ program-wide static `dExpTables()`; TRAPEZOIDALLOG is inherently per-`[a, b]`.)
 
 ### Branch `adding_replicas` — training robustness + replica-output groundwork (2026-07)
 
-Preparatory changes for the planned CFF-uncertainty replica ensemble (train N replicas on
-Monte-Carlo-fluctuated data, band = mean ± σ in Python), plus training quality-of-life fixes:
+Preparatory changes for the CFF-uncertainty replica ensemble (train N replicas on
+Monte-Carlo-fluctuated data, band = mean ± σ in Python) — implemented 2026-09-01, see below —
+plus training quality-of-life fixes:
 
 - **Best-validation model snapshot in `train_nn()`** — the parameters are snapshotted
   (`p.detach().clone()`) every time the validation χ² improves and restored into the net when
@@ -524,6 +537,313 @@ Monte-Carlo-fluctuated data, band = mean ± σ in Python), plus training quality
 
 ---
 
+### CFF rescaling `CFF = xB^x_pow · NN(x)` (2026-08-05)
+
+An optional power-law prefactor so the network can learn a rescaled target instead of the raw
+CFF — motivated by CFFs (e.g. Im H) that vary over orders of magnitude near small xB, where
+`xB^p · NN(x)` is easier to fit than the CFF directly.
+
+- `DVCSCFFNNTorch::forwardNN()` returns `NN_output · xB^m_xPow`; the exponent arrives through
+  `setModel(net, outputLayer, xMin, xMax, xPow)` so the model and *all* of its preprocessing
+  travel together.  `x_pow = 0.0` (the default) is a no-op, so every existing call site is
+  unaffected.
+- `CFF_NN_Fitter` takes `x_pow` as its 4th constructor argument and threads it through every
+  `setModel` call site (training via `CustomLoss`, `predict()`, and the three `observ_calc*`
+  verification paths), so training and inference apply the identical rescaling.  It is also
+  written into `cff_model.json` as `"x_pow"` so the Python CFF-scan notebooks reproduce the
+  exact forward.
+- **Also in this change:** `weight_decay(1e-3)` was **removed** from the Adam optimizer — the
+  regularization was suppressing fit quality on the 16-point dataset.  No replacement
+  regularization was added.
+
+`x_pow` is still a manually-set constant per run (`Run_CFF_NN_Fit.cpp` passes `0.0`), not fit
+or selected automatically.
+
+---
+
+### Reduced χ²/n loss + Monte Carlo replica ensemble (2026-09-01)
+
+**Loss normalized.**  `CustomLoss` now returns `χ²/n` rather than the raw `Σ((pred−y)/σ)²`
+(`normalize = true` by default; `false` is kept only for controlled A/B runs).  The loss is
+therefore comparable across dataset and split sizes and reads as a standard reduced-χ²
+diagnostic (~1 = good fit).  `predict()`'s reported `chi2` and `cff_model.json`'s
+`best_val_chi2` are on the same scale.  Early-stopping `patience` was raised **200 → 1000**,
+since the flatter normalized landscape was stopping on noise.
+
+**`fit_once()` — one shared fit routine.**  `train_nn()`'s body (shuffle/split, per-feature
+min-max on the training split, fresh net + optimizer, epoch loop with early stopping and
+best-val snapshot) was extracted into a private helper that touches no member state and
+returns a `TrainedModel`.  The same routine now serves both the central fit and every replica:
+
+```cpp
+struct TrainedModel { CFFNNModel net; torch::Tensor X_min, X_max; float best_val_loss; };
+struct FitOutcome   { TrainedModel model; bool hopeless; };
+FitOutcome fit_once(X, E, phi, y_obs, sigma, bool smear,
+        const std::string& learning_curve_path, float hopeless_val_loss,
+        int hopeless_check_epoch, unsigned seed, bool normalize_loss = true) const;
+```
+
+- `smear = true` fits `y_obs + N(0, σ)` pseudodata (σ itself is never smeared — it stays the
+  χ² weight); `smear = false` is the central fit on the raw data.
+- **Hopeless-attempt detection:** an attempt is aborted if the validation loss is ever
+  non-finite, or is still above `hopeless_val_loss` at an epoch multiple of
+  `hopeless_check_epoch` (periodic re-check; `<= 0` disables it, as the central fit does).
+- `seed` fixes `torch::manual_seed` (weight init + smear draw) and the split RNG, so an
+  identical seed reproduces byte-identical starting conditions.
+
+**`train_replicas(n_replicas, …)`** loops replicas, retrying each `fit_once` attempt up to
+`max_tries_per_replica` times and **fully redrawing** on a hopeless attempt (fresh smear +
+fresh split + fresh weights, not just a weight reinit).  *(Updated 2026-09-18: 30 tries by
+default, and if every try is hopeless the run exports the replicas accepted so far and then
+throws — see "Replica retries" below.  Until then, the last hopeless attempt was kept with a
+warning so a run always produced exactly `n_replicas` models.)*
+`base_seed = 0` (default) draws every attempt's seed from `std::random_device` (production
+mode); a nonzero `base_seed` makes the whole ensemble deterministic for A/B comparisons.
+Only the **last** replica writes a learning curve (`cff_learning_curve_last_replica.csv`), as
+a replica-fit diagnostic — it is fit to smeared pseudodata, so its χ²/n is **not** comparable
+to the central fit's against real data.
+
+**`export_replicas(out_dir, name_prefix)`** writes each trained replica as
+`<name_prefix><NN>.json` (same format as `cff_model.json`), for out-of-process mean ± σ CFF
+bands in Python.  Note the ordering inside a run: the replicas are held in memory during
+training and **all** JSONs are written together at the end, after the ensemble finishes —
+which is why their timestamps trail the central fit's outputs by the full replica-training
+time.
+
+Why smeared pseudodata: a σ from seed-only reruns measures *optimization scatter*, not data
+uncertainty (three such runs swung R² from −0.20 to 0.64).  Fluctuating each point per replica
+is what makes the band meaningful; the scheme follows Gepard's `datasets_replica_vectloss` /
+`train_net_vectloss`.
+
+---
+
+### Batching across data points — implemented (#3, 2026-09-15, branch `vect_optionA`)
+
+The GL swap was the **prerequisite**: DEXP's refinement level is chosen adaptively *per*
+kinematic point, so it cannot fit a single static `[N, M]` φ grid, whereas a fixed GL rule
+gives the **same M φ nodes for every point** — exactly what batching needs.
+
+The batch dimension was pushed **down into the existing reusable layers** (not into a
+monolithic batch entry point), so adding a new observable still means writing only its thin
+batched leaf:
+
+- kinematics carried as no-grad `[N]` tensors, **one** `[N,3]` NN forward per batch,
+  cross-sections as `[N,M]` (N data points × M φ nodes), the φ-integral reduced over the
+  shared grid;
+- a batched sibling method on each module (alongside the scalar virtual), plus a
+  `computeManyKinematicTorch` service driver mirroring the scalar
+  `computeSingleKinematic ↔ computeManyKinematic` pair;
+- the **prepare/assemble** split of #1 lifted to `[N]`: public `prepareTensorBatch(xB, t, Q2, E)`
+  runs the φ-/helicity-independent `setupKinematicsTorchBatch` once (NN forward + BMJ12
+  kinematics + 72 angular coefficients), then the lightweight
+  `crossSectionTensorBatch(λ, charge, φ[, VCSSubProcessType])` overloads only sum the selected
+  sub-processes.
+
+**Current chain correspondence** (all base-typed pointers + virtual dispatch, as in scalar):
+
+```
+ObservableServiceTorch::computeManyKinematicTorch      ↔  ObservableService::computeManyKinematic
+   computeSingleKinematicTorch                         ↔     computeSingleKinematic
+ObservableTorch::computeTensorBatch (template method)  ↔  Observable::compute
+   computeTensorImplBatch (hook)                       ↔     computeObservable
+DVCSAluMinusTorch::aLUTensorBatch (pointwise)          ↔  DVCSAluMinus::computeObservable
+DVCSProcessModuleTorch::crossSectionTensorBatch (Σ)    ↔  DVCSProcessModule::compute(…,VCSSubProcessType)
+   crossSectionBH/VCS/InterfTensorBatch                ↔     CrossSectionBH/VCS/Interf
+   setupKinematicsTorchBatch                           ↔     setKinematics + CFF forward
+DVCSCFFNNTorch::computeAllCFFsTensorBatch              ↔  DVCSCFFNNTorch::computeCFF
+```
+
+`computeTensor` / `computeTensorImpl` (single-kinematic) survive only as thin **N=1 wrappers**
+over their `…Batch` siblings — an entry-point convenience, not a separate implementation.
+
+`CustomLoss::forward` no longer loops the rows: it builds a `List<DVCSObservableKinematic>`
+once and makes a **single** `computeManyKinematicTorch` call per loss evaluation (one for the
+training split, one for validation, per epoch), so the whole batch is one graph with one
+`backward()`.  This is **data parallelism** — the multicore speedup comes
+for free from ATen's intra-op threading on the batched tensor ops, the path is GPU-ready, and
+there are none of the gradient-accumulation races of a hand-threaded per-point loop (option #4,
+never implemented and now moot: there is no per-point loop left to thread).
+
+> **Gap:** `DVCSAluMinusTorch::computeTensorImplBatch` is still a **throwing placeholder**, so
+> a bare `DVCSAluMinusTorch` cannot be used (its scalar `computeObservable` throws too).  Only
+> the moment leaf `DVCSAluMinusSin1PhiTorch` is wired.  A real pointwise implementation needs
+> each of the N kinematics paired with its **own** φ (an `[N]` broadcast), whereas the existing
+> machinery broadcasts φ as an `[M]` axis *shared* across all N points (the `[N,M]` outer
+> product, correct for quadrature over the sin1φ moment but not for raw per-φ data).  This is
+> the work item for the planned raw-per-φ A_LU dataset.
+
+---
+
+### Dead single-point torch path removed (2026-09-16, commit `82edefd`)
+
+With `computeTensorImpl` reduced to an N=1 wrapper over `computeTensorImplBatch`, nothing drove
+the single-point tensor machinery any more.  It was deleted (6 files, +69/−902): `prepareTensor`,
+all four non-batch `crossSectionTensor` overloads, the three non-batch sub-process virtuals,
+`setupKinematicsTorch` (~410 lines of transcribed BMJ12 kinematics), the non-batch CFF layer and
+cached members, and `DVCSAluMinusTorch::aLUTensor`.
+
+This removed a **third full copy of the BMJ12 transcription** — before: base scalar (PARTONS,
+doubles, full coverage) + non-batch tensor + batched tensor; after: two.  `m_M` (proton mass) is
+the one member both surviving paths share.
+
+**Verification** — full run (central fit + 10 replicas + exports), three paths at
+xB=0.2, t=−0.2, Q²=2, E=5.932:
+
+| Path | A_LU^{sin1φ} |
+|---|---|
+| `observ_calc()` (base PARTONS, scalar) | **0.13186** |
+| `observ_calc_torch()` (tensor path) | **0.13186**, `requires_grad = true` |
+| `observ_calc_torch_scalar()` (torch scalar virtuals) | **0.13186** |
+
+Note what that check *is*: `observ_calc_torch_scalar()` still routes through torch (the leaf's
+`computeObservable` wraps `computeTensor().item()`), so it is a genuine **native-vs-torch
+differential test** between two independent implementations of BMJ12 — not a tautology.  Nothing
+links the two transcriptions, so a PARTONS upgrade or coefficient fix could silently desync them
+and this comparison is the only thing that would notice.  Its limit: it is **one** kinematic
+point in the unpolarized sector.
+
+---
+
+### Replica retries and ensemble integrity (2026-09-18)
+
+Two changes to what happens when a replica cannot be fit.
+
+**`max_retries_per_replica` → `max_tries_per_replica`, default 5 → 30.**  The loop always counted
+*total* tries, so the old name promised one more attempt than the code gave; 30 means one initial
+fit plus up to 29 redraws.
+
+**On exhaustion the run now fails instead of padding the ensemble.**  Previously the last hopeless
+attempt was kept with a warning, so a run always produced exactly `n_replicas` models — one of
+which could be junk, silently widening the uncertainty band.  Now `train_replicas` exports the
+replicas accepted so far (that compute is worth keeping) and then throws a `std::runtime_error`
+naming the replica, the try count and how many were exported.
+
+**`export_replicas` deletes the previous `<prefix>*.json` before writing** — unless there is
+nothing to write, in which case the earlier ensemble is left alone.  Without this, a 10-replica run
+followed by a 5-replica run left `_05`…`_09` on disk and a `glob` in the plotting notebook read ten
+replicas, five of them from a different fit.
+
+For reference, Gepard's `fitter_vectloss.py` takes neither route: `fit()` retries with **no cap**
+(`while test_err < 0`), so exhaustion cannot occur; `fitgood()` caps tries **globally** across the
+ensemble and, when the budget runs out, simply `break`s and returns fewer nets with no error.  Both
+discard the failed net and keep the successes, as here — only the ending differs.
+
+---
+
+### A tensor interface for the CFF link, and a scalar-model adapter (2026-09-21)
+
+The torch chain's bottom link was pinned to a single implementation:
+`setupKinematicsTorchBatch` cross-cast its convol-coeff module to the **concrete**
+`DVCSCFFNNTorch`, because — unlike the observable and process links — the CFF link had no
+torch base to cast to.  The 2026-06-16 rework introduced `ObservableTorch<K>` and
+`ProcessModuleTorch<K>` but never the CFF twin, since there was only ever one implementation.
+
+**`DVCSCFFModuleTorch`** fills that gap: a pure mixin owning `AllCFFsTensorBatch` and one pure
+virtual `computeAllCFFsTensorBatch(xi, t, Q2, muF2, muR2)`, sitting under a generic
+`CFFModuleTorch<K>` so that every link now has a generic template with a channel class beneath
+it.  `DVCSCFFNNTorch` derives from it alongside the PARTONS module, so every link pairs a PARTONS
+class (identity, registration, the scalar contract) with a torch base (the tensor interface).
+
+The signature carries the **CCF kinematics**, the five quantities
+`DVCSConvolCoeffFunctionKinematic` holds, because that is what the scalar chain hands its CFF
+module: `DVCSProcessModule::computeConvolCoeffFunction` runs the xi-converter and the scales
+module first.  The process converts, the CFF module receives — and the torch chain mirrors that,
+so a source parameterized in xB (the network) converts back itself with one tensor op.
+
+**`DVCSCFFScalarTorch`** is the first second implementation: it presents any scalar PARTONS CFF
+model as a tensor CFF source, evaluating it per point and returning `[N]` **no-grad** complex
+tensors.  Nothing downstream minds — the chain multiplies CFF tensors by no-grad kinematics
+either way, and the observable simply comes back detached.  It receives CCF kinematics already
+converted, so it has only to build the bean and call the model.  It carries the same dual base as
+`DVCSCFFNNTorch` (PARTONS module + torch mixin), so it is attached with
+`setConvolCoeffFunctionModule()` like any other CFF module rather than through a wiring path of
+its own.
+
+**What it buys** is `observ_calc_scalar_cff()`: fixed CFFs (`DVCSCFFConstant`) pushed through
+PARTONS' native process module *and* through `DVCSProcessBMJ12Torch`, so the two sides share
+nothing but four constant numbers.  Until now the native-vs-torch check ran the same trained
+network on both sides, which cannot isolate the process layer.  It scans **every point of the
+dataset** and drives the torch side through `computeManyKinematicTorch`, making it also the only
+check that exercises the batched `[N,M]` path at N>1.
+
+Across the 16-point CLAS07 file, most points agree to ~10⁻⁵ relative and the worst reaches
+4.2×10⁻⁴.  That residual was **measured**, not assumed, to be φ-quadrature error, by raising the
+torch integrator order and re-running the scan:
+
+| torch φ-integrator | max relative deviation |
+|---|---|
+| GL-10 (the default at the time) | 4.2×10⁻⁴ |
+| GL-20 | 1.2×10⁻⁸ |
+| GL-40 | 1.8×10⁻¹³ |
+| GL-80 | 1.7×10⁻¹³ (double-precision floor) |
+
+So the two independent BMJ12 transcriptions agree to ~2×10⁻¹³ once φ is resolved — the strongest
+validation the torch port has had.  It also corrects the 2026-06-22 claim that GL-10 reproduces
+DEXP to ~6 significant figures: that was one kinematic point, and across the dataset it is ~3.4.
+Still far below the data's own 6% precision, so no fit result is affected — but the margin is
+100× smaller than advertised.
+
+**The default was therefore raised to GL-20** (2026-09-21), moving the worst-case agreement to
+~1.2×10⁻⁸ for twice the φ nodes.  Not GL-40: at GL-20 the quadrature residual already sits ~5
+orders of magnitude below the data's own 6% precision, so further nodes buy nothing observable.
+The extra nodes turn out to be **free**: normalizing two full pipeline runs by their logged
+epochs gives 31.640 ms per epoch-line at GL-10 against 31.660 ms at GL-20, a difference of
+**+0.06%** — inside the noise.  That confirms the scaling argument above from the other side: what
+costs time is the number of tensor operations, not how many elements they hold, and M enters the
+`[N,M]` tensors exactly as N does.
+
+A side effect worth knowing: the three `observ_calc*` paths now agree to **every printed digit**
+(0.133156 / 0.133156 / 0.133156).  The 6th-significant-digit spread that these notes have
+attributed to "the GL-vs-DEXP gap" since 2026-06-22 was never a floor — it was GL-10's quadrature
+error, and it vanishes once φ is resolved.
+
+Two things `DVCSCFFConstant` taught us, both now in comments: the native BMJ12 process requests
+**every** GPD type the module advertises — transversity, twist-3, even the DDVCS `HL` — and
+`setCFFs()` *replaces* the map rather than merging, so handing it four entries makes it throw on
+the fifth type requested.  Start from the module's own pre-zeroed map and overwrite the four
+twist-2 entries; those zeros are also exactly what the torch port assumes.
+
+---
+
+## Current status / open items
+
+- **Raw per-φ A_LU leaf** — `DVCSAluMinusTorch::computeTensorImplBatch` is a throwing
+  placeholder, so a bare `DVCSAluMinusTorch` is unusable (both its tensor and its inherited
+  scalar entry points throw).  It needs own-φ `[N]` semantics rather than the shared-`[M]`
+  quadrature broadcast.  Blocks the planned dataset that fits raw per-φ A_LU instead of the
+  sin1φ moment.
+- **Unpolarized-target only** on the tensor path — the torch BMJ12 port omits the LP/TP
+  coefficient rows.  Correct for A_LU and siblings; for polarized-target observables use the
+  base PARTONS classes.  The determining factor is the **observable leaf**, not the process
+  module (a `*Torch` leaf routes into the tensor physics however you drive it).  See
+  `CLAUDE.md` for the full caveat table.
+- **`x_pow` is a manual constant** — not fit or selected automatically, and no systematic
+  comparison of values has been recorded.
+- **Replica hyperparameters untuned** — `hopeless_val_loss = 100`, `hopeless_check_epoch = 200`,
+  `max_tries_per_replica = 30` are initial defaults.  Note the threshold is only *checked* at
+  epoch multiples of 200, by which point a healthy fit sits near χ²/n ≈ 5 — so 100 catches a
+  stuck or diverged fit, not a merely poor one.  An observed 10-replica run showed
+  pronounced overfitting well before early stopping fired (train χ²/n → 0.62 while val climbed
+  to 8.28, best val around epoch ~620 with `patience = 1000` then running ~1000 epochs uphill),
+  so the replica band is likely wider than the data alone justifies.  Untested hypothesis,
+  flagged for whoever tunes this next.
+- **Replicas are trained sequentially** — `n_replicas × (1 + retries)` full fits.  Easier to
+  parallelize than the old per-point idea (each replica owns its net/optimizer/graph, so there
+  is no shared-gradient race), but not done.
+- **Absolute paths are hardcoded** — `CFF_NN_Fitter::OUT_DIR` and the data path in
+  `Run_CFF_NN_Fit.cpp`.  Both must be updated on an environment move.
+- **`predict()` still loops per point** (`computeSingleKinematicTorch`) while training uses the
+  batched driver.  Harmless — it runs once per fit, not per epoch.
+- **A failed run still exits 0** — `main()` catches, logs through PARTONS' logger and falls
+  through to `return 0`, so SWIF/Slurm marks the job succeeded and `./bin/Run_CFF_NN_Fit && …`
+  continues onto an incomplete ensemble.  The `.out` file does end with the
+  `[ERROR] (main::main) Replica N still hopeless …` line, so a human reading the log sees it.
+  Fix: an `int exit_code` set in both catch blocks and returned at the end.
+- ~~φ-quadrature order~~ **resolved 2026-09-21**: raised 10 → 20, taking the worst-case deviation
+  from adaptive DEXP from 4.2×10⁻⁴ to ~1.2×10⁻⁸ at a measured cost of +0.06% per epoch.
+
+---
+
 ## Build
 
 ```bash
@@ -535,10 +855,17 @@ Single target:
 cd build && make Run_CFF_NN_Fit
 ```
 
-Executables are placed in `bin/`.  **PARTONS must be run from `bin/`**:
+Executables are placed in `bin/`.  Run them **from the project root**, not from `bin/`:
+
 ```bash
-cd bin && ./Run_CFF_NN_Fit
+./bin/Run_CFF_NN_Fit
 ```
+
+`Partons::init` derives the properties-file directory from `argv[0]`, but the paths *inside*
+`bin/partons.properties` (`log.file.path = bin/logger.properties`,
+`xml.schema.file.path = data/xmlSchema.xsd`) are resolved against the **actual working
+directory** — so `cd bin && ./Run_CFF_NN_Fit` makes them resolve to `bin/bin/…` and fails on
+`logger.properties`.
 
 ---
 
@@ -561,12 +888,18 @@ libtorch is bundled locally at `libtorch/`.  All others are found via `cmake/Mod
 
 ## Output files (`My_Analysis/Partons_output/`)
 
+The directory is hardcoded as `CFF_NN_Fitter::OUT_DIR` (an absolute path — update it, and the
+data path passed to the constructor, on an environment move).  Every file is opened with
+`std::ios::trunc`, so each run overwrites the previous one's outputs.
+
 | File | Content | Written by |
 |---|---|---|
-| `cff_learning_curve.csv` | epoch, train χ², val χ² (every 2 epochs) | `train_nn()` |
+| `cff_learning_curve.csv` | epoch, train reduced χ²/n, val reduced χ²/n (every 2 epochs) — **central fit** | `train_nn()` (via `fit_once()`) |
 | `obs_prediction.csv` | `xB,t,Q2,E,phi,obs_true,obs_pred,error` per point | `predict()` |
-| `obs_model_eval.csv` | `observable,mse,r_squared,chi2` | `predict()` |
-| `cff_model.json` | trained NN export (`arch`, `dtype`, `best_val_chi2`, `input_features`, `output_layer`, min-max `scaling`, `fc1`/`fc2` weights+biases) — reproduces the exact forward in Python | `predict()` |
+| `obs_model_eval.csv` | `observable,mse,r_squared,chi2` (chi2 = reduced χ²/n) | `predict()` |
+| `cff_model.json` | trained NN export (`arch`, `dtype`, `best_val_chi2`, `input_features`, `x_pow`, `output_layer`, min-max `scaling`, `fc1`/`fc2` weights+biases) — reproduces the exact forward in Python | `predict()` |
+| `cff_learning_curve_last_replica.csv` | same format, for the **last replica only** — a replica diagnostic, fit to smeared pseudodata, so **not** comparable to the central fit's χ²/n | `train_replicas()` |
+| `cff_model_replica_<NN>.json` | one per trained replica, same format as `cff_model.json` — for Python mean ± σ CFF bands | `export_replicas()` |
 | `dvcs_DVCSAluSinPhi_BSACLAS15_ANN.csv` | Mean ± σ observable per kinematic point (replica ensemble, from `ObsCalc_CFFNNReplicas`) | `ObsCalc_CFFNNReplicas` |
 | `dvcs_DVCSAluSinPhi_ANN_replicas.csv` | Individual replica values for every kinematic point (from `ObsCalc_CFFNNReplicas`) | `ObsCalc_CFFNNReplicas` |
 
@@ -574,7 +907,22 @@ libtorch is bundled locally at `libtorch/`.  All others are found via `cmake/Mod
 
 ## Data format
 
-Input files are pipe-separated (`|`).  Columns: `xB | t | Q2 | ... | CFF values ... | error`.
-Features are the first 3 columns `(xB, t, Q²)`; CFF labels are matched by column name from
-the `output_layer` argument; the last column (`error`) is read as σ but not yet used in the
-loss function.
+Input files are pipe-separated (`|`).
+
+**Observable format** (what `CFF_NN_Fitter` fits today):
+
+```
+xB | t | Q2 | E | phi | <observable> | error
+```
+
+`load_data_observable()` returns `(X[N,3] = (xB, t, Q²), E[N], phi[N], y_obs[N] = col 5,
+sigma[N] = last col)`.  Training and prediction operate on the **observable**
+(A_LU^{sin1φ}), and `error` **is** used — it is the σ in the reduced-χ²/n loss.  φ is loaded
+and passed into the kinematics; the sin1φ moment integrates it out, but it is kept so
+`CustomLoss` is reusable for φ-dependent observables.  Current file:
+`Data/Partons_input/BSA_CLAS_07_KK_format_ALU_error.csv` (16 points).
+
+The older **CFF-label format** (`xB | t | Q2 | … | ImH | ReH | … | error`, labels matched by
+column name from `output_layer`) is no longer read by `CFF_NN_Fitter` — its loader was removed
+in 2026-06-17 when the workflow switched to fitting the observable.  `NN_Fitter::load_data()`
+in `NN_Fit.{h,cpp}` still uses it for the separate `NN_CFF_fit` executable.

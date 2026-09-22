@@ -83,6 +83,7 @@ list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/NN_Fit.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/CFF_NN_Fit.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/CustomLoss.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFScalarTorch.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/MathIntegratorModuleTorch.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Services/DVCS/DVCSObservableServiceTorch.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.cpp)
@@ -165,6 +166,7 @@ set_property(TARGET NN_CFF_fit PROPERTY CXX_STANDARD 17)
 add_executable(Run_CFF_NN_Fit src/Run_CFF_NN_Fit.cpp src/NNFit/CFF_NN_Fit.cpp
 	src/NNFit/CustomLoss.cpp
 	src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.cpp
+	src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFScalarTorch.cpp
 	src/NNFit/Theory/Modules/MathIntegratorModuleTorch.cpp
 	src/NNFit/Theory/Modules/Services/DVCS/DVCSObservableServiceTorch.cpp
 	src/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.cpp

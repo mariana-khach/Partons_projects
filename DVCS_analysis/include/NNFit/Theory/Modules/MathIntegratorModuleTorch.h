@@ -91,6 +91,31 @@ protected:
             double a, double b) const;
 
     /**
+     * Batched (N-point) sibling of integrateTorch(): the integrand is
+     * evaluated batched over N data points x M quadrature nodes at once.
+     *
+     * pFunction receives the same [M] tensor of node positions integrateTorch()
+     * would (shared by every data point -- the quadrature nodes/weights don't
+     * depend on N) and must return an [N,M] tensor of integrand values.
+     *
+     * Only fixed-rule quadratures (GL, TRAPEZOIDAL) are supported -- throws
+     * otherwise. DEXP's adaptive refinement level is chosen per-point in
+     * principle, which can't be expressed as a single static [N,M] grid;
+     * TRAPEZOIDALLOG batching is not implemented either (not needed by any
+     * current caller). Reuses the same cached m_quadNodes/m_quadWeights as
+     * integrateTorch() -- one cache serves both, since the nodes/weights are
+     * identical regardless of N.
+     *
+     * @param pFunction Integrand, x[M] -> f(x)[N,M].
+     * @param a Lower bound.
+     * @param b Upper bound.
+     * @return [N] torch::Tensor holding the integral per data point.
+     */
+    torch::Tensor integrateTorchBatch(
+            const std::function<torch::Tensor(const torch::Tensor&)>& pFunction,
+            double a, double b) const;
+
+    /**
      * @return Pointer to the underlying NumA integrator (may be null). Exposed
      *         so callers can tune N / tolerances via the usual NumA interface.
      */

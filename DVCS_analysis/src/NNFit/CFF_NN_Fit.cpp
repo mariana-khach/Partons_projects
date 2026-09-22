@@ -5,11 +5,14 @@
 #include "../../include/NNFit/CFF_NN_Fit.h"
 #include "../../include/NNFit/CustomLoss.h"
 #include "../../include/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.h"
+#include "../../include/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFScalarTorch.h"
+#include <partons/modules/convol_coeff_function/DVCS/DVCSCFFConstant.h>
 #include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSObservableTorch.h"
 #include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.h"
 #include "../../include/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.h"
 #include "../../include/NNFit/Theory/Modules/Services/DVCS/DVCSObservableServiceTorch.h"
 
+#include <partons/beans/List.h>
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
 #include <partons/beans/observable/ObservableResult.h>
 #include <partons/beans/PerturbativeQCDOrderType.h>
@@ -31,8 +34,13 @@
 #include <numeric>
 #include <random>
 #include <sstream>
+#include <filesystem>
 #include <stdexcept>
+#include <system_error>
 
+
+const std::string CFF_NN_Fitter::OUT_DIR =
+        "/Users/marianav/Documents/Research/Analysis/GPD_studies/git/Partons/DVCS_analysis/My_Analysis/Partons_output";
 
 CFF_NN_Fitter::CFF_NN_Fitter(const std::string& data_path,
                                float test_fraction,
@@ -136,6 +144,27 @@ CFF_NN_Fitter::FitOutcome CFF_NN_Fitter::fit_once(const torch::Tensor& X,
     torch::Tensor y_train   = split(y_used, idx_train), y_val  = split(y_used, idx_val);
     torch::Tensor s_train   = split(sigma, idx_train), s_val   = split(sigma, idx_val);
 
+    // Build the train/val kinematics Lists ONCE here (not per epoch inside
+    // CustomLoss::forward()) -- the kinematics are fixed for the whole
+    // fit_once() call (only the NN weights change epoch to epoch), so the
+    // List<K> pack cost is paid once per fit rather than 2x per epoch.
+    auto buildKinematicList = [](const torch::Tensor& Xs, const torch::Tensor& Es,
+            const torch::Tensor& phis) {
+        PARTONS::List<PARTONS::DVCSObservableKinematic> list;
+        const int m = static_cast<int>(Xs.size(0));
+        for (int i = 0; i < m; ++i) {
+            list.add(PARTONS::DVCSObservableKinematic(
+                    Xs[i][0].item<double>(), Xs[i][1].item<double>(),
+                    Xs[i][2].item<double>(), Es[i].item<double>(),
+                    phis[i].item<double>()));
+        }
+        return list;
+    };
+    PARTONS::List<PARTONS::DVCSObservableKinematic> trainKin =
+            buildKinematicList(X_train, E_train, phi_train);
+    PARTONS::List<PARTONS::DVCSObservableKinematic> valKin =
+            buildKinematicList(X_val, E_val, phi_val);
+
     // Per-feature min-max from THIS attempt's own training kinematics. Applied
     // INSIDE the NN module (passed to CustomLoss -> setModel below); X stays
     // RAW here because the observable chain builds its kinematics from raw
@@ -193,16 +222,17 @@ CFF_NN_Fitter::FitOutcome CFF_NN_Fitter::fit_once(const torch::Tensor& X,
         // Training step — reduced chi^2 (chi^2/n) on the observable
         net->train();
         optimizer.zero_grad();
-        torch::Tensor loss_train =
-                loss_fn(X_train, E_train, phi_train, y_train, s_train);
+        torch::Tensor loss_train = loss_fn(trainKin, y_train, s_train);
         loss_train.backward();
         optimizer.step();
 
-        // Validation step
+        // Validation step — inference conditions: no graph (NoGradGuard) AND
+        // eval mode (the guard restores training mode for the next epoch).
         float val_loss;
         {
             torch::NoGradGuard no_grad;
-            val_loss = loss_fn(X_val, E_val, phi_val, y_val, s_val).item<float>();
+            EvalModeGuard eval_mode(net);
+            val_loss = loss_fn(valKin, y_val, s_val).item<float>();
         }
 
         // Hopeless checks: divergence, or still bad at the checkpoint epoch.
@@ -257,13 +287,11 @@ void CFF_NN_Fitter::train_nn() {
 
     auto [X, E, phi, y_obs, sigma] = load_data_observable();
 
-    const std::string out_dir = "/Users/marianav/Documents/Research/Analysis/GPD_studies/git/Partons/DVCS_analysis/My_Analysis/Partons_output";
-
     // Central (unsmeared) fit — no hopeless-abort/retry (hopeless_check_epoch=0
     // disables the periodic threshold check; matches this method's original
     // always-run-to-completion-or-early-stop behavior).
     FitOutcome outcome = fit_once(X, E, phi, y_obs, sigma, /*smear=*/false,
-            out_dir + "/cff_learning_curve.csv",
+            OUT_DIR + "/cff_learning_curve.csv",
             /*hopeless_val_loss=*/std::numeric_limits<float>::max(),
             /*hopeless_check_epoch=*/0, /*seed=*/std::random_device{}());
 
@@ -273,7 +301,7 @@ void CFF_NN_Fitter::train_nn() {
     m_best_val_loss  = outcome.model.best_val_loss;
 }
 
-void CFF_NN_Fitter::train_replicas(int n_replicas, int max_retries_per_replica,
+void CFF_NN_Fitter::train_replicas(int n_replicas, int max_tries_per_replica,
         float hopeless_val_loss, int hopeless_check_epoch,
         unsigned base_seed, bool normalize_loss) {
 
@@ -286,29 +314,45 @@ void CFF_NN_Fitter::train_replicas(int n_replicas, int max_retries_per_replica,
 
         std::cout << "\n=== Replica " << r << " ===\n";
 
+        // Only the last replica writes a curve, as a replica-fit diagnostic
+        // (it is fit to smeared pseudodata, so its chi^2/n is not comparable to
+        // the central fit's). fit_once() truncates on open, so across retries the
+        // surviving file is the kept attempt's curve.
+        const std::string curve_path = (r == n_replicas - 1)
+                ? OUT_DIR + "/cff_learning_curve_last_replica.csv"
+                : std::string();
+
         FitOutcome outcome{TrainedModel{}, true};
         int attempt = 0;
-        for (; attempt < max_retries_per_replica; ++attempt) {
+        for (; attempt < max_tries_per_replica; ++attempt) {
             unsigned seed = (base_seed == 0)
                     ? std::random_device{}()
                     : base_seed + static_cast<unsigned>(r) * 100u
                             + static_cast<unsigned>(attempt);
             outcome = fit_once(X, E, phi, y_obs, sigma, /*smear=*/true,
-                    /*learning_curve_path=*/"", hopeless_val_loss, hopeless_check_epoch,
+                    curve_path, hopeless_val_loss, hopeless_check_epoch,
                     seed, normalize_loss);
             if (!outcome.hopeless) break;
-            std::cout << "Replica " << r << " attempt " << attempt
+            std::cout << "Replica " << r << " try " << (attempt + 1) << "/"
+                      << max_tries_per_replica
                       << " was hopeless, redrawing (fresh smear + split + weights)...\n";
         }
 
+        // Every try hopeless: the ensemble cannot be completed. Export what was
+        // accepted so far (that compute is still good), then fail -- a short
+        // ensemble returned silently would be read downstream as a full one.
         if (outcome.hopeless) {
-            std::cout << "WARNING: replica " << r << " still hopeless after "
-                      << max_retries_per_replica
-                      << " attempts; keeping the last attempt anyway.\n";
-        } else {
-            std::cout << "Replica " << r << " accepted | best val loss: "
-                      << outcome.model.best_val_loss << " (attempt " << attempt << ")\n";
+            export_replicas(OUT_DIR);
+            throw std::runtime_error("Replica " + std::to_string(r)
+                    + " still hopeless after " + std::to_string(max_tries_per_replica)
+                    + " tries. Exported the " + std::to_string(m_replicas.size())
+                    + " replica(s) accepted before it; aborting (asked for "
+                    + std::to_string(n_replicas) + ").");
         }
+
+        std::cout << "Replica " << r << " accepted | best val loss: "
+                  << outcome.model.best_val_loss << " (try " << (attempt + 1) << "/"
+                  << max_tries_per_replica << ")\n";
 
         m_replicas.push_back(outcome.model);
     }
@@ -332,6 +376,10 @@ void CFF_NN_Fitter::predict() {
                     DVCSCFFNNTorch::classId);
     static_cast<DVCSCFFNNTorch*>(pDVCSCFF)->setModel(
             m_net, m_output_layer, m_X_min, m_X_max, m_xPow);
+
+    // Inference: eval mode for the whole evaluation below (paired with the
+    // NoGradGuard at the per-point loop).
+    EvalModeGuard eval_mode(m_net);
 
     DVCSXiConverterModule* pDVCSXiConverter =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
@@ -375,12 +423,11 @@ void CFF_NN_Fitter::predict() {
     torch::Tensor y_true = y_obs.to(torch::kFloat64);
     torch::Tensor sig    = sigma.to(torch::kFloat64);
 
-    const std::string out_dir = "/Users/marianav/Documents/Research/Analysis/GPD_studies/git/Partons/DVCS_analysis/My_Analysis/Partons_output";
 
     // Per-point predicted vs measured observable.
-    std::ofstream csv(out_dir + "/obs_prediction.csv", std::ios::trunc);
+    std::ofstream csv(OUT_DIR + "/obs_prediction.csv", std::ios::trunc);
     if (!csv)
-        throw std::runtime_error("Cannot open obs_prediction.csv for writing in: " + out_dir);
+        throw std::runtime_error("Cannot open obs_prediction.csv for writing in: " + OUT_DIR);
     csv << "xB,t,Q2,E,phi,obs_true,obs_pred,error\n";
     for (int i = 0; i < n; ++i) {
         csv << X[i][0].item<float>() << "," << X[i][1].item<float>() << ","
@@ -400,9 +447,9 @@ void CFF_NN_Fitter::predict() {
     float r2     = (ss_tot > 0.f) ? 1.f - ss_res / ss_tot : 0.f;
     float chi2   = ((y_pred - y_true) / sig).pow(2).mean().item<float>();
 
-    std::ofstream eval(out_dir + "/obs_model_eval.csv", std::ios::trunc);
+    std::ofstream eval(OUT_DIR + "/obs_model_eval.csv", std::ios::trunc);
     if (!eval)
-        throw std::runtime_error("Cannot open obs_model_eval.csv for writing in: " + out_dir);
+        throw std::runtime_error("Cannot open obs_model_eval.csv for writing in: " + OUT_DIR);
     eval << "observable,mse,r_squared,chi2\n";
     eval << pDVCSObs->getClassName() << "," << mse << "," << r2 << "," << chi2 << "\n";
 
@@ -412,7 +459,7 @@ void CFF_NN_Fitter::predict() {
 
     // Persist the trained model (weights + scaling + labels) for out-of-process
     // CFF scans/plots (read by CFF_obs_train_predict_plot.ipynb).
-    export_model_json(out_dir + "/cff_model.json");
+    export_model_json(OUT_DIR + "/cff_model.json");
 }
 
 void CFF_NN_Fitter::export_model_json(const std::string& path) const {
@@ -484,6 +531,34 @@ void CFF_NN_Fitter::export_model_json(const std::string& path,
 void CFF_NN_Fitter::export_replicas(const std::string& out_dir,
         const std::string& name_prefix) const {
 
+    if (m_replicas.empty()) {
+        // Nothing to write, so nothing is cleaned: a run that fails before its
+        // first replica leaves the previous ensemble on disk rather than
+        // destroying it.
+        std::cout << "No replicas to export; leaving " << out_dir << " untouched\n";
+        return;
+    }
+
+    // Drop the previous ensemble first, so out_dir describes THIS run. Without
+    // it, a shorter run (10 replicas, then 5) or an aborted one would leave
+    // stale <prefix>NN.json files that a glob in the plotting code reads as
+    // part of the current set.
+    int removed = 0;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(out_dir, ec)) {
+        if (!entry.is_regular_file()) continue;
+        const std::string fn = entry.path().filename().string();
+        if (fn.rfind(name_prefix, 0) == 0 && entry.path().extension() == ".json") {
+            if (std::filesystem::remove(entry.path(), ec)) ++removed;
+        }
+    }
+    if (ec)
+        std::cout << "Warning: could not fully clean previous "
+                  << name_prefix << "*.json in " << out_dir << " (" << ec.message() << ")\n";
+    if (removed > 0)
+        std::cout << "Removed " << removed << " " << name_prefix
+                  << "*.json from the previous run\n";
+
     for (size_t r = 0; r < m_replicas.size(); ++r) {
         std::ostringstream name;
         name << out_dir << "/" << name_prefix << std::setw(2)
@@ -550,6 +625,187 @@ void CFF_NN_Fitter::observ_calc() {
     std::cout << "DVCSAluMinusSin1Phi = " << result << "\n";
 }
 
+void CFF_NN_Fitter::observ_calc_scalar_cff() {
+
+    using namespace PARTONS;
+
+    // A differential test of the batched BMJ12 port that does NOT involve the
+    // network: the same fixed CFFs are pushed through PARTONS' native scalar
+    // process module and through DVCSProcessBMJ12Torch, so any disagreement is
+    // in the transcription of BMJ12 and nothing else. The standing
+    // observ_calc_torch_scalar check uses the trained net on both sides, which
+    // cannot isolate the process layer this way.
+    //
+    // DVCSCFFConstant is deliberate: no GPD module, no evolution, no
+    // convolution integral -- just four numbers, so the comparison is of the
+    // cross-section arithmetic alone.
+    const std::complex<double> cffH(1.5, 3.0);
+    const std::complex<double> cffE(0.7, -0.4);
+    const std::complex<double> cffHt(0.9, 1.1);
+    const std::complex<double> cffEt(-0.3, 0.2);
+
+    // DVCSCFFConstant's constructor pre-fills every GPDType with zero and
+    // advertises them all, and the native BMJ12 process asks for every type the
+    // module advertises. So START from the module's own map and overwrite only
+    // the four twist-2 entries -- replacing the map wholesale makes it throw on
+    // the first type left out. The zeros are also what the torch port assumes
+    // (no transversity, no twist-3), so both paths see the same physics.
+    auto makeConstantCFFModule = [&]() {
+        DVCSConvolCoeffFunctionModule* pMod =
+                Partons::getInstance()->getModuleObjectFactory()->newDVCSConvolCoeffFunctionModule(
+                        DVCSCFFConstant::classId);
+        DVCSCFFConstant* pConst = static_cast<DVCSCFFConstant*>(pMod);
+        std::map<GPDType::Type, std::complex<double> > values = pConst->getCFFs();
+        values[GPDType::H]  = cffH;
+        values[GPDType::E]  = cffE;
+        values[GPDType::Ht] = cffHt;
+        values[GPDType::Et] = cffEt;
+        pConst->setCFFs(values);
+        pMod->setQCDOrderType(PerturbativeQCDOrderType::LO);
+        return pMod;
+    };
+
+    // ---- Path A: PARTONS native scalar chain ------------------------------
+    DVCSConvolCoeffFunctionModule* pCFFScalarA = makeConstantCFFModule();
+
+    DVCSXiConverterModule* pXiA =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
+                    DVCSXiConverterXBToXi::classId);
+    DVCSScalesModule* pScalesA =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSScalesModule(
+                    DVCSScalesQ2Multiplier::classId);
+    DVCSProcessModule* pProcessA =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSProcessModule(
+                    DVCSProcessBMJ12::classId);
+    DVCSObservable* pObsA =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
+                    DVCSAluMinusSin1Phi::classId);
+
+    pProcessA->setXiConverterModule(pXiA);
+    pProcessA->setScaleModule(pScalesA);
+    pProcessA->setConvolCoeffFunctionModule(pCFFScalarA);
+    pObsA->setProcessModule(pProcessA);
+
+    // ---- Path B: the same model through the tensor chain ------------------
+    DVCSConvolCoeffFunctionModule* pCFFScalarB = makeConstantCFFModule();
+
+    // The adapter is a CFF module like any other -- created by the factory,
+    // attached with setConvolCoeffFunctionModule(), found by the same
+    // cross-cast every CFF source goes through. It wraps the scalar model;
+    // the process module hands it CCF kinematics exactly as it would the
+    // network.
+    DVCSConvolCoeffFunctionModule* pCFFAdapter =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSConvolCoeffFunctionModule(
+                    DVCSCFFScalarTorch::classId);
+    static_cast<DVCSCFFScalarTorch*>(pCFFAdapter)->setScalarModule(pCFFScalarB);
+    pCFFAdapter->setQCDOrderType(PerturbativeQCDOrderType::LO);
+
+    DVCSXiConverterModule* pXiB =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
+                    DVCSXiConverterXBToXi::classId);
+    DVCSScalesModule* pScalesB =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSScalesModule(
+                    DVCSScalesQ2Multiplier::classId);
+    DVCSProcessModule* pProcessB =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSProcessModule(
+                    DVCSProcessBMJ12Torch::classId);
+    DVCSObservable* pObsB =
+            Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
+                    DVCSAluMinusSin1PhiTorch::classId);
+
+    pProcessB->setXiConverterModule(pXiB);
+    pProcessB->setScaleModule(pScalesB);
+    pProcessB->setConvolCoeffFunctionModule(pCFFAdapter);
+    pObsB->setProcessModule(pProcessB);
+
+
+    DVCSObservableServiceTorch* pServiceTorch =
+            static_cast<DVCSObservableServiceTorch*>(
+                    Partons::getInstance()->getServiceObjectRegistry()->get(
+                            "DVCSObservableServiceTorch"));
+    DVCSObservableTorch* pObsTorchB = dynamic_cast<DVCSObservableTorch*>(pObsB);
+
+    // ---- Scan the dataset's kinematics ------------------------------------
+    // Every point of the input file, not one hand-picked kinematic: a
+    // coefficient error that only bites at large |t| or small xB has nowhere to
+    // hide. The torch side goes through computeManyKinematicTorch, so this also
+    // exercises the batched [N,M] path -- every other verification in this file
+    // runs at N=1, where a broadcasting mistake would not show.
+    auto [X, E_data, phi_data, y_obs, sigma] = load_data_observable();
+    const int N = static_cast<int>(X.size(0));
+
+    PARTONS::List<DVCSObservableKinematic> kinematics;
+    for (int i = 0; i < N; ++i) {
+        kinematics.add(DVCSObservableKinematic(X[i][0].item<double>(),
+                X[i][1].item<double>(), X[i][2].item<double>(),
+                E_data[i].item<double>(), phi_data[i].item<double>()));
+    }
+
+    // Torch: one batched call for all N points.
+    torch::Tensor torchValues =
+            pServiceTorch->computeManyKinematicTorch(kinematics, pObsTorchB);
+
+    // Native: PARTONS has no batched entry point that keeps per-point values
+    // here, so loop the scalar service.
+    std::vector<double> nativeValues(N);
+    for (int i = 0; i < N; ++i) {
+        nativeValues[i] =
+                Partons::getInstance()->getServiceObjectRegistry()->getDVCSObservableService()->computeSingleKinematic(
+                        kinematics[i], pObsA).getValue().getValue();
+    }
+
+    std::cout << "\nScalar-CFF differential test (DVCSCFFConstant, no network)\n";
+    std::cout << "  native scalar BMJ12 vs torch batched BMJ12 over "
+              << N << " dataset points\n\n";
+    std::cout << "    xB        t        Q2       E        native       torch"
+                 "        abs diff    rel diff\n";
+
+    double maxAbs = 0., maxRel = 0.;
+    int maxRelPoint = 0;
+    for (int i = 0; i < N; ++i) {
+        const double nat = nativeValues[i];
+        const double tor = torchValues[i].item<double>();
+        const double absDiff = std::fabs(tor - nat);
+        const double relDiff = (nat != 0.) ? absDiff / std::fabs(nat) : 0.;
+
+        if (absDiff > maxAbs) maxAbs = absDiff;
+        if (relDiff > maxRel) { maxRel = relDiff; maxRelPoint = i; }
+
+        std::cout << std::fixed << std::setprecision(4)
+                  << "  " << std::setw(7) << X[i][0].item<double>()
+                  << "  " << std::setw(7) << X[i][1].item<double>()
+                  << "  " << std::setw(7) << X[i][2].item<double>()
+                  << "  " << std::setw(7) << E_data[i].item<double>()
+                  << std::scientific << std::setprecision(6)
+                  << "  " << std::setw(13) << nat
+                  << "  " << std::setw(13) << tor
+                  << "  " << std::setw(11) << absDiff
+                  << "  " << std::setw(11) << relDiff << "\n";
+    }
+    std::cout << std::defaultfloat;
+
+    std::cout << "\n  max |diff|     = " << maxAbs << "\n";
+    std::cout << "  max rel |diff| = " << maxRel << "  (point " << maxRelPoint
+              << ": xB=" << X[maxRelPoint][0].item<double>()
+              << ", t=" << X[maxRelPoint][1].item<double>()
+              << ", Q2=" << X[maxRelPoint][2].item<double>() << ")\n";
+    std::cout << "  requires_grad  = "
+            << (torchValues.requires_grad() ? "true" : "false")
+            << " (expected false: constant CFFs carry no graph)\n";
+    // What to expect, measured 2026-09-21 on this dataset: the residual is the
+    // torch side's fixed GL-10 phi-quadrature against the scalar side's
+    // adaptive DEXP -- NOT a difference in the BMJ12 transcription. Raising the
+    // torch integrator order collapses it, which is how that was established:
+    //   GL-10 -> 4.2e-4 | GL-20 -> 1.2e-8 | GL-40 -> 1.8e-13 | GL-80 -> 1.7e-13
+    // i.e. the two independent implementations agree to double precision once
+    // phi is resolved. A rise ABOVE ~1e-3 here, or a max that does not fall
+    // when the order is raised, means something real has broken.
+    std::cout << "  Expect <= ~5e-4 relative at GL-10 (this is phi-quadrature "
+                 "error, not a physics difference):\n"
+                 "    raising the torch integrator order collapses it "
+                 "(GL-20 ~1e-8, GL-40 ~2e-13).\n";
+}
+
 void CFF_NN_Fitter::observ_calc_torch() {
 
     using namespace PARTONS;
@@ -563,6 +819,11 @@ void CFF_NN_Fitter::observ_calc_torch() {
                     DVCSCFFNNTorch::classId);
     static_cast<DVCSCFFNNTorch*>(pDVCSCFF)->setModel(
             m_net, m_output_layer, m_X_min, m_X_max, m_xPow);
+
+    // Inference in the Dropout/BatchNorm sense -- but deliberately NO
+    // NoGradGuard here: this path exists to show the autograd graph survives
+    // (requires_grad = true on the printed result).
+    EvalModeGuard eval_mode(m_net);
 
     DVCSXiConverterModule* pDVCSXiConverter =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
@@ -630,6 +891,11 @@ void CFF_NN_Fitter::observ_calc_torch_scalar() {
                     DVCSCFFNNTorch::classId);
     static_cast<DVCSCFFNNTorch*>(pDVCSCFF)->setModel(
             m_net, m_output_layer, m_X_min, m_X_max, m_xPow);
+
+    // Inference: eval mode for this evaluation. The NoGradGuard lives inside
+    // the leaf's scalar virtual (computeObservable), which is what the scalar
+    // service calls here.
+    EvalModeGuard eval_mode(m_net);
 
     DVCSXiConverterModule* pDVCSXiConverter =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(

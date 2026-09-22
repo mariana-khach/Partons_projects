@@ -5,6 +5,8 @@
 #ifndef CUSTOM_LOSS_H
 #define CUSTOM_LOSS_H
 
+#include <partons/beans/List.h>
+#include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
 #include <torch/torch.h>
 
 #include <string>
@@ -32,12 +34,16 @@ class DVCSObservableServiceTorch; // fwd decl (held only as a pointer)
  *
  * where O is the observable evaluated through the differentiable PARTONS-tensor
  * module chain (DVCSCFFNNTorch -> DVCSProcessBMJ12Torch -> the wired observable),
- * driven by DVCSObservableServiceTorch::computeSingleKinematicTorch — exactly the
- * wiring of CFF_NN_Fitter::observ_calc_torch(). With the default wiring the
- * observable is A_LU^{sin1phi} (DVCSAluMinusSin1PhiTorch), but the loss is kept
- * general: the full kinematics (xB, t, Q2, E, phi) are passed per point, so it
- * also serves phi-dependent observables. (For the sin1phi moment, phi is
- * integrated out and the supplied value is irrelevant.)
+ * driven by DVCSObservableServiceTorch::computeManyKinematicTorch — the batched
+ * (Option A: channel-generic List<K>) sibling of the single-point wiring used
+ * by CFF_NN_Fitter::observ_calc_torch(). All N rows are evaluated in one batched
+ * call instead of a per-row loop (the 2026-09 #3 speedup, vect_optionA design:
+ * the kinematics List is built once per fit -- see fit_once() -- not rebuilt
+ * every epoch). With the default wiring the observable is A_LU^{sin1phi}
+ * (DVCSAluMinusSin1PhiTorch), but the loss is kept general: the full kinematics
+ * (xB, t, Q2, E, phi) are carried by each list element, so it also serves
+ * phi-dependent observables. (For the sin1phi moment, phi is integrated out
+ * and the supplied value is irrelevant.)
  *
  * The autograd graph runs from the returned chi^2 back to the NN parameters, so
  * the network is trained on the measured observable rather than on CFF labels.
@@ -45,7 +51,7 @@ class DVCSObservableServiceTorch; // fwd decl (held only as a pointer)
  * torch::nn::Module subclass (wrapped by TORCH_MODULE), instantiated and called
  * like a PyTorch loss module:
  *   CustomLoss loss(net, {"ImH"}, xMin, xMax);
- *   torch::Tensor chi2 = loss(X, E, phi, y_obs, sigma);
+ *   torch::Tensor chi2 = loss(kinematics, y_obs, sigma);
  */
 class CustomLossImpl : public torch::nn::Module {
 
@@ -72,21 +78,20 @@ public:
             double xPow = 0.0, bool normalize = true);
 
     /**
-     * chi^2 over all rows. Each row builds a DVCSObservableKinematic from the full
-     * (xB, t, Q2, E, phi) and the predicted observable is compared to its measured
-     * value.
+     * chi^2 over all rows, evaluated in one batched call through the
+     * channel-generic List<DVCSObservableKinematic> (Option A) batched chain.
+     * The list is expected to be built once by the caller (e.g. once per
+     * fit_once() call, reused across every epoch) rather than rebuilt per
+     * forward() call -- see fit_once()'s doc comment.
      *
-     * @param X      [N,3] raw kinematics (xB, t, Q2).
-     * @param E      [N]   beam energy per point.
-     * @param phi    [N]   azimuthal angle per point (used by phi-dependent
-     *                     observables; ignored by the sin1phi moment).
-     * @param y_obs  [N]   measured observable value.
-     * @param sigma  [N]   per-point uncertainty.
+     * @param kinematics [N] observable kinematics (xB, t, Q2, E, phi per point).
+     * @param y_obs      [N] measured observable value.
+     * @param sigma      [N] per-point uncertainty.
      * @return 0-d torch::Tensor chi^2, grad-connected to the NN parameters.
      */
-    torch::Tensor forward(const torch::Tensor& X, const torch::Tensor& E,
-            const torch::Tensor& phi, const torch::Tensor& y_obs,
-            const torch::Tensor& sigma);
+    torch::Tensor forward(
+            const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics,
+            const torch::Tensor& y_obs, const torch::Tensor& sigma);
 
 private:
 

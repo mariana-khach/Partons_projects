@@ -25,6 +25,38 @@ struct CFFNNModelImpl : torch::nn::Module {
 };
 TORCH_MODULE(CFFNNModel);
 
+// RAII: put the network in eval (inference) mode for the current scope and
+// restore whatever mode it was in on exit -- the torch::nn twin of
+// NoGradGuard, and independent of it (eval mode governs layers whose behavior
+// differs between training and inference, e.g. Dropout/BatchNorm; NoGradGuard
+// governs whether the autograd graph is built). Both are needed for a plain
+// inference call, but not always together: observ_calc_torch() wants eval mode
+// AND a live graph, so it takes this guard and no NoGradGuard.
+//
+// Restoring on exit matters because the CFFNNModel is shared by handle between
+// the fitter, CustomLoss and DVCSCFFNNTorch -- a bare eval() in an inference
+// call would otherwise leak into any training that runs afterwards.
+//
+// Today's 3 -> 6 (Tanh) -> n network has no mode-dependent layer, so this is a
+// no-op in effect; it exists so adding one later cannot silently train in
+// inference mode.
+class EvalModeGuard {
+public:
+    explicit EvalModeGuard(const CFFNNModel& net)
+        : m_net(net), m_wasTraining(net ? net->is_training() : false) {
+        if (m_net) m_net->eval();
+    }
+    ~EvalModeGuard() {
+        if (m_net) m_net->train(m_wasTraining);
+    }
+    EvalModeGuard(const EvalModeGuard&)            = delete;
+    EvalModeGuard& operator=(const EvalModeGuard&) = delete;
+
+private:
+    CFFNNModel m_net;
+    bool       m_wasTraining;
+};
+
 // Result of one fit attempt (central or replica): the trained net plus the
 // per-feature min-max scaling fit on that attempt's own training split.
 struct TrainedModel {
@@ -36,6 +68,12 @@ struct TrainedModel {
 class CFF_NN_Fitter {
 
 public:
+    // Directory every fit output is written to: learning curves, per-point
+    // predictions, model evaluation, and the exported model JSON. Absolute
+    // path -- update this (and the data path passed to the constructor) on an
+    // environment move.
+    static const std::string OUT_DIR;
+
     explicit CFF_NN_Fitter(
         const std::string& data_path,
         float test_fraction = 0.3f,
@@ -49,15 +87,28 @@ public:
     void observ_calc_torch();
     void observ_calc_torch_scalar();
 
+    // Differential test of the batched BMJ12 port with the network taken out of
+    // the picture: fixed CFFs (DVCSCFFConstant) pushed through PARTONS' native
+    // scalar process module and through DVCSProcessBMJ12Torch (via
+    // DVCSCFFScalarTorch), so a disagreement can only come from the two
+    // transcriptions of BMJ12. Needs no trained model.
+    void observ_calc_scalar_cff();
+
     // Train n_replicas independent fits to Monte-Carlo-smeared pseudodata
     // (y_smeared = y_obs + N(0, sigma), same formula/independence as Gepard's
     // datasets_replica_vectloss: fresh smear + fresh train/val split + fresh
     // weights + fresh optimizer per replica). A replica whose validation loss
     // (reduced chi^2 = chi^2/n_val) is NaN/Inf, or still above hopeless_val_loss
     // at any epoch multiple of hopeless_check_epoch, is discarded and fully
-    // redrawn (not just weight-reinit), up to max_retries_per_replica times;
-    // the last attempt is kept with a warning if still hopeless after that
-    // many retries. Populates m_replicas.
+    // redrawn (not just weight-reinit), up to max_tries_per_replica times.
+    //
+    // max_tries_per_replica counts TOTAL tries, not retries after a first
+    // attempt: 30 means one initial fit plus up to 29 redraws. If all of them
+    // are hopeless the ensemble is abandoned -- the replicas accepted so far
+    // are exported (so the compute is not lost), then a std::runtime_error is
+    // thrown. A partial ensemble is not a result, so the run fails loudly
+    // rather than returning fewer replicas than asked for. Populates
+    // m_replicas.
     //
     // hopeless_val_loss is a reduced-chi^2 (chi^2/n_val) threshold, re-checked
     // every hopeless_check_epoch epochs (periodic, not a single checkpoint —
@@ -75,7 +126,7 @@ public:
     //
     // normalize_loss: forwarded to CustomLoss (true = chi^2/n, the default;
     // false = raw chi^2 sum, kept only for the A/B comparison above).
-    void train_replicas(int n_replicas = 10, int max_retries_per_replica = 5,
+    void train_replicas(int n_replicas = 10, int max_tries_per_replica = 30,
             float hopeless_val_loss = 100.f, int hopeless_check_epoch = 200,
             unsigned base_seed = 0, bool normalize_loss = true);
 
@@ -84,6 +135,14 @@ public:
     // export_model_json()'s cff_model.json for the central fit. name_prefix
     // defaults to "cff_model_replica_"; override for a distinct export set
     // (e.g. "cff_model_replica_origloss_" for the normalize_loss=false A/B run).
+    //
+    // Any pre-existing <name_prefix>*.json in out_dir is deleted first, so the
+    // directory always describes the run that just finished -- otherwise a
+    // shorter ensemble (10 replicas, then 5) or an aborted one would leave
+    // stale files that a glob in the plotting code would read as part of the
+    // current set. Nothing is deleted when there are no replicas to write, so
+    // a run that fails before its first replica leaves the previous ensemble
+    // intact.
     void export_replicas(const std::string& out_dir,
             const std::string& name_prefix = "cff_model_replica_") const;
 

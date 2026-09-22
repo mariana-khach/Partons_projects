@@ -28,7 +28,7 @@ class DVCSProcessModuleTorch;
  * Mirrors the scalar hierarchy exactly: this is the reusable pointwise layer
  * (sibling of DVCSAluMinus), and Fourier-moment observables
  * (DVCSAluMinusSin1PhiTorch, a future DVCSAluMinusCos0PhiTorch, ...) derive from
- * it and reuse aLUTensor() — just as the scalar moment classes derive from
+ * it and reuse aLUTensorBatch() — just as the scalar moment classes derive from
  * DVCSAluMinus and reuse its computeObservable().
  *
  * Subclasses PARTONS::DVCSAluMinus so it is a scalar drop-in; the inherited
@@ -53,20 +53,50 @@ protected:
 
     /**
      * Pointwise A_LU at the kinematic's stored phi (the ObservableTorch hook;
-     * tensor twin of DVCSAluMinus::computeObservable). Moment subclasses override
-     * this with their Fourier integral.
+     * tensor twin of DVCSAluMinus::computeObservable). A thin N=1 wrapper
+     * around computeTensorImplBatch() (mirrors DVCSAluMinusSin1PhiTorch's own
+     * N=1 wrapper) — not yet implemented at this base class, since
+     * computeTensorImplBatch() itself throws here (see its doc comment).
+     * Moment subclasses override this with their Fourier integral instead.
      * @return 0-d torch::Tensor, grad-connected to the NN parameters.
      */
     torch::Tensor computeTensorImpl(
             const PARTONS::DVCSObservableKinematic& kinematic) override;
 
     /**
-     * Reusable pointwise asymmetry A_LU(phi), batched over a [N] tensor of phi.
-     * Shared by every Fourier-moment subclass.
-     * @return [N] tensor A_LU(phi), grad-connected to the NN CFF parameters.
+     * Reusable pointwise asymmetry A_LU(phi), batched over N data points x M
+     * phi nodes. Shared by every Fourier-moment subclass: prepare once
+     * (hoisting the helicity-independent setup), assemble per helicity --
+     * driven through the same abstract DVCSProcessModuleTorch* base
+     * (prepareTensorBatch()/crossSectionTensorBatch()), no concrete
+     * process-module type needed.
+     * @return [N,M] tensor A_LU(phi), grad-connected to the NN CFF parameters.
      */
-    torch::Tensor aLUTensor(const PARTONS::DVCSObservableKinematic& kinematic,
+    torch::Tensor aLUTensorBatch(const torch::Tensor& xB, const torch::Tensor& t,
+            const torch::Tensor& Q2, const torch::Tensor& E,
             const torch::Tensor& phi);
+
+    /**
+     * Batched (N-point) sibling of computeTensorImpl() -- the
+     * ObservableTorch<K> hook (channel-generic List<K>).
+     *
+     * NOT IMPLEMENTED at this pointwise base -- throws. A meaningful batched
+     * pointwise A_LU would need each of the N kinematics' own phi matched
+     * 1:1 (an [N] phi broadcast), whereas aLUTensorBatch()/
+     * crossSectionTensorBatch() broadcast phi as a [M] axis shared by every
+     * data point (an [N,M] outer product) -- built for the Fourier-moment
+     * leaf (DVCSAluMinusSin1PhiTorch), which integrates every point over the
+     * same quadrature nodes. Reusing it here would need either a new
+     * per-point-phi broadcasting mode or a wasteful O(N^2) diagonal
+     * extraction; skipped since no current consumer needs a batched
+     * pointwise leaf. DVCSAluMinusSin1PhiTorch overrides this with a real,
+     * O(N) implementation reusing aLUTensorBatch() as it was built for.
+     * Kept as a concrete (non-pure) override only so this class -- which
+     * self-registers its own prototype -- remains instantiable.
+     */
+    torch::Tensor computeTensorImplBatch(
+            const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics)
+            override;
 
     /** Scalar wrapper over computeTensor() (detached) for the scalar pipeline. */
     virtual PARTONS::PhysicalType<double> computeObservable(

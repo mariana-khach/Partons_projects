@@ -74,34 +74,19 @@ CustomLossImpl::CustomLossImpl(CFFNNModel net,
     }
 }
 
-torch::Tensor CustomLossImpl::forward(const torch::Tensor& X,
-        const torch::Tensor& E, const torch::Tensor& phi,
+torch::Tensor CustomLossImpl::forward(
+        const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics,
         const torch::Tensor& y_obs, const torch::Tensor& sigma) {
 
-    const int n = static_cast<int>(X.size(0));
+    const int n = static_cast<int>(kinematics.size());
 
-    torch::Tensor chi2 = torch::zeros({}, kF64);
+    // Observable through the differentiable batched chain — grad-connected to
+    // the NN, one call for all N points (no per-row bean construction here;
+    // the list was already built once by the caller -- see fit_once()).
+    torch::Tensor pred = m_pServiceTorch->computeManyKinematicTorch(kinematics, m_pObsTorch);
 
-    for (int i = 0; i < n; ++i) {
-
-        const double xB = X[i][0].item<double>();
-        const double t = X[i][1].item<double>();
-        const double Q2 = X[i][2].item<double>();
-        const double Eb = E[i].item<double>();
-        const double ph = phi[i].item<double>();
-
-        // Full kinematics, kept general for phi-dependent observables.
-        // (For the sin1phi moment, phi is integrated out by the observable.)
-        PARTONS::DVCSObservableKinematic kin(xB, t, Q2, Eb, ph);
-
-        // Observable through the differentiable chain — grad-connected to the NN.
-        torch::Tensor pred =
-                m_pServiceTorch->computeSingleKinematicTorch(kin, m_pObsTorch);
-
-        torch::Tensor resid =
-                (pred - y_obs[i].to(kF64)) / sigma[i].to(kF64);
-        chi2 = chi2 + resid * resid;
-    }
+    torch::Tensor resid = (pred - y_obs.to(kF64)) / sigma.to(kF64);
+    torch::Tensor chi2 = (resid * resid).sum();
 
     return m_normalize ? chi2 / n : chi2;
 }

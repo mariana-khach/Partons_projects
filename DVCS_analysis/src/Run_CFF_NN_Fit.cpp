@@ -30,11 +30,14 @@ int main(int argc, char** argv) {
         fitter.observ_calc_torch();
         fitter.observ_calc_torch_scalar();
 
+        // Network-free differential test of the batched BMJ12 port: fixed CFFs
+        // through PARTONS' native process module vs the tensor one.
+        fitter.observ_calc_scalar_cff();
+
         // Monte Carlo replica ensemble (smeared pseudodata) for a CFF
         // uncertainty band, alongside the central fit above.
         fitter.train_replicas(10);
-        fitter.export_replicas(
-            "/Users/marianav/Documents/Research/Analysis/GPD_studies/git/Partons/DVCS_analysis/My_Analysis/Partons_output");
+        fitter.export_replicas(CFF_NN_Fitter::OUT_DIR);
 
     } catch (const ElemUtils::CustomException &e) {
         pPartons->getLoggerManager()->error(e);
