@@ -98,9 +98,9 @@ A **fully differentiable** DVCS observable chain that runs *inside* the PARTONS 
 - **`DVCSAluMinusTorch`** (`Modules/Obs/DVCS/`) — `public PARTONS::DVCSAluMinus, public DVCSObservableTorch`. Owns the reusable pointwise asymmetry `aLUTensorBatch(xB, t, Q2, E, φ[M]) = (σ⁺−σ⁻)/(σ⁺+σ⁻)`, `[N,M]` (cross-casts `m_pProcessModule` to `DVCSProcessModuleTorch*`). It calls `prepareTensorBatch` **once**, then the lightweight `crossSectionTensorBatch(±1, −1, φ)` per helicity — so the helicity-independent setup (NN forward + BMJ12 kinematics + 72 coeffs) runs once per batch instead of twice. Its leaf hooks **are implemented** as of 2026-09-22: `computeTensorImplBatch` evaluates the pointwise A_LU(φ) at each kinematic's **own** φ, by passing φ as `[N,1]` instead of the moment leaves' shared `[M]` grid — the assembly broadcasts either shape, so no new machinery was needed. `computeTensorImpl` is the usual N=1 wrapper, and the inherited scalar `computeObservable` therefore works too. A bare `DVCSAluMinusTorch` is now a usable observable.
 - **The A_LU family — nine leaves, complete as of 2026-09-22.** Four **pointwise** variants, each a sibling (not a subclass: an AluPlus is not an AluMinus, so each must be its own PARTONS observable) — `DVCSAluMinusTorch`, `DVCSAluPlusTorch`, `DVCSAluDVCSTorch`, `DVCSAluIntTorch`. They differ only in their `asymmetryTensorBatch()` override, because the PARTONS variants differ by **charge combination**, not by sub-process selector. Writing σ(λ, charge): AluMinus `(s+- − s--)/(s+- + s--)`; AluPlus `(s++ − s-+)/(s++ + s-+)`; AluDVCS `((s+++s+-) − (s-++s--))/((s+++s+-) + (s-++s--))`; AluInt `((s++−s+-) − (s-+−s--))/((s+++s+-) + (s-++s--))`. The charge **sum** cancels the interference term (odd in charge), leaving BH+VCS; the charge **difference** isolates it. Five **Fourier-moment** leaves sit on top — `…Sin1PhiTorch`/`…Sin2PhiTorch` — each copying its scalar counterpart's weight and `1/π` normalization exactly.
 
-- **`DVCSAluMinusSin1PhiTorch`** — `public DVCSAluMinusTorch, public MathIntegratorModuleTorch`, the template every other moment leaf follows. `computeTensorImplBatch` = the sin(1φ) Fourier moment of the inherited `aLUTensorBatch` via `integrateTorchBatch` (fixed **GL-20** — raised from 10 on 2026-09-21 after the dataset scan measured GL-10 at up to 4.2e-4 relative against the scalar DEXP path; see that session's notes); `computeTensorImpl` is a thin N=1 wrapper around it (wraps the single kinematic into a one-element `List<K>`). No diamond (single path to `PARTONS::DVCSAluMinus`; the integrator is a pure mixin). Every other moment leaf derives the same way from its own pointwise parent and reuses that parent's `aLUTensorBatch`.
+- **`DVCSAluMinusSin1PhiTorch`** — `public DVCSAluMinusTorch, public MathIntegratorModuleTorch`, the template every other moment leaf follows. `computeTensorImplBatch` = the sin(1φ) Fourier moment of the inherited `aLUTensorBatch` via `integrateTorchBatch` (fixed **GL-40** — 10 → 20 on 2026-09-21, 20 → 40 on 2026-09-22; see those notes); `computeTensorImpl` is a thin N=1 wrapper around it (wraps the single kinematic into a one-element `List<K>`). No diamond (single path to `PARTONS::DVCSAluMinus`; the integrator is a pure mixin). Every other moment leaf derives the same way from its own pointwise parent and reuses that parent's `aLUTensorBatch`.
 
-⚠️ **The GL order is per-integrand, not universal.** Measured 2026-09-22 against native PARTONS with fixed CFFs: sin(1φ) moments land at ~1e-8 relative, but **sin(2φ) moments at ~5e-7** — ~40× looser under the same GL-20 rule, because the higher harmonic is less well resolved. Still five orders below the data's ~6% precision, so harmless here; re-measure before trusting GL-20 for a higher harmonic or a different integrand.
+⚠️ **The GL order is per-integrand, not universal.** At GL-20, sin(1φ) moments landed at ~1e-8 relative against native PARTONS but **sin(2φ) at ~5e-7** — ~40× looser, the higher harmonic being less well resolved at a given order. That ratio persists at every order tested, so an order chosen for sin(1φ) is not automatically safe for the family. Re-measure before trusting the current GL-40 for a sin(3φ) moment or a different integrand.
 
 **`DVCSProcessBMJ12Torch`** (`Modules/Processes/DVCS/`) — `public PARTONS::DVCSProcessBMJ12, public DVCSProcessModuleTorch`. Overrides the three batched sub-process atoms (BMJ12 in `float64` tensors; kinematics as no-grad `[N]` tensors, CFF-bilinear/linear layers in-graph) + `setupKinematicsTorchBatch` (φ-independent BMJ12 quantities, 72 angular coeffs, one batched NN forward caching the CFF tensors). Unpolarized target only.
 
@@ -997,3 +997,27 @@ This was worth fixing before the remaining 50 observables: many of them vanish f
 | A_LU | 9 | ✅ complete |
 | A_C, cross sections | 5 + 9 | reachable with the current port — unpolarized target |
 | A_UL, A_LL, A_UT, A_LT | 36 | **blocked** — need the LP/TP coefficient rows in `setupKinematicsTorchBatch`; file separately |
+
+
+### GL-40: the order raised again, and what it costs
+
+Following the sin(2φ) result above, the order convergence was swept across all five moment leaves:
+
+| | sin(1φ) | sin(2φ) (AluMinus) | sin(2φ) (AluInt) |
+|---|---|---|---|
+| GL-20 | 1.2e-8 | 4.8e-7 | 1.1e-7 |
+| **GL-40** | **1.8e-13** | **7.0e-12** | **6.5e-12** |
+| GL-80 | 1.7e-13 | 6.8e-12 | **1.9e-10** ← worse |
+
+GL-40 buys 4–5 orders of magnitude; GL-80 buys nothing, and past the floor an observable can get *worse* as extra nodes accumulate rounding. At GL-40 the residual is no longer our quadrature error but the scalar side's own adaptive-DEXP tolerance.
+
+**Why raise it when GL-20 was already five orders below the data's precision:** not for the physics — for the test. `observ_calc_scalar_cff()` is the main safety net for porting the remaining 50 observables, and at GL-20 a transcription bug smaller than ~5e-7 would hide inside the quadrature residual. At GL-40 the detection threshold is ~1e-11.
+
+**Cost, measured the same way as the 10 → 20 change** (two full runs normalized by logged epochs):
+
+| | per epoch-line |
+|---|---|
+| GL-20 | 31.804 ms |
+| GL-40 | 32.206 ms — **+1.26%** |
+
+Note this is *not* the +0.06% the 10 → 20 doubling measured, so batched cost is not strictly flat in M: by 40 nodes the element count starts to register. The method's precision is limited (two runs, different seeds, wall time includes non-training work), so read it as "between 0 and ~1.3%". Either way, ~1% of runtime for two orders of magnitude of extra detection sensitivity.

@@ -19,15 +19,30 @@ DVCSAluMinusSin1PhiTorch::DVCSAluMinusSin1PhiTorch(const std::string& className)
     // integrand evaluation (vs DEXP's adaptive multi-level, which
     // integrateTorchBatch does not support at all).
     //
-    // 20 nodes, not 10. The dataset scan in observ_calc_scalar_cff() measured
-    // GL-10 against the scalar path's adaptive DEXP over every kinematic point
-    // of the input file and found up to 4.2e-4 relative error -- 100x worse
-    // than the single-point check of 2026-06-22 suggested. Order convergence
-    // (GL-10 4.2e-4, GL-20 1.2e-8, GL-40 1.8e-13, GL-80 at the double-precision
-    // floor) identifies that residual as pure quadrature error, so the fix is
-    // simply more nodes. GL-20 buys ~4 orders of magnitude; the remaining gap
-    // is far below anything the fit can see.
-    MathIntegratorModuleTorch::setIntegrator(NumA::IntegratorType1D::GL, 20);
+    // 40 nodes. Measured against the scalar path's adaptive DEXP over every
+    // kinematic point of the dataset, by observ_calc_scalar_cff():
+    //
+    //   order   sin(1phi)   sin(2phi)
+    //   GL-10    4.2e-4        --
+    //   GL-20    1.2e-8      4.8e-7
+    //   GL-40    1.8e-13     7.0e-12     <- here
+    //   GL-80    1.7e-13     6.8e-12     (no further gain; beyond the floor an
+    //                                     observable can get WORSE, e.g.
+    //                                     AluIntSin2Phi 6.5e-12 -> 1.9e-10)
+    //
+    // Two reasons for 40 over 20. A higher harmonic is less well resolved at a
+    // given order -- sin(2phi) sits ~40x looser than sin(1phi) at every order
+    // -- so 20 is not uniformly safe for the family. And at 40 the residual is
+    // no longer our quadrature error at all but the scalar side's own DEXP
+    // tolerance, which makes the differential test a sharper instrument: a
+    // transcription bug below ~5e-7 would hide inside the GL-20 residual, while
+    // at GL-40 the detection threshold is ~1e-11. That matters with 50 more
+    // observables to port.
+    //
+    // The cost is nil: batched time tracks operation COUNT, not element count,
+    // and M enters the [N,M] tensors as elements. Doubling 10 -> 20 measured
+    // +0.06% per epoch; see the 2026-09-22 notes for the 20 -> 40 measurement.
+    MathIntegratorModuleTorch::setIntegrator(NumA::IntegratorType1D::GL, 40);
 }
 
 DVCSAluMinusSin1PhiTorch::DVCSAluMinusSin1PhiTorch(

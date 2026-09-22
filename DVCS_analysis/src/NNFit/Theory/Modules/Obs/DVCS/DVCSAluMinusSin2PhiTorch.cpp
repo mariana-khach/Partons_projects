@@ -17,8 +17,8 @@ const unsigned int DVCSAluMinusSin2PhiTorch::classId =
 DVCSAluMinusSin2PhiTorch::DVCSAluMinusSin2PhiTorch(const std::string& className)
         : DVCSAluMinusTorch(className), MathIntegratorModuleTorch() {
     // Same fixed-order Gauss-Legendre rule as the other moment leaves; see
-    // DVCSAluMinusSin1PhiTorch for why the order is 20 rather than 10.
-    MathIntegratorModuleTorch::setIntegrator(NumA::IntegratorType1D::GL, 20);
+    // DVCSAluMinusSin1PhiTorch for why the order is 40.
+    MathIntegratorModuleTorch::setIntegrator(NumA::IntegratorType1D::GL, 40);
 }
 
 DVCSAluMinusSin2PhiTorch::DVCSAluMinusSin2PhiTorch(const DVCSAluMinusSin2PhiTorch& other)

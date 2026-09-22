@@ -802,8 +802,8 @@ Still far below the data's own 6% precision, so no fit result is affected — bu
 100× smaller than advertised.
 
 **The default was therefore raised to GL-20** (2026-09-21), moving the worst-case agreement to
-~1.2×10⁻⁸ for twice the φ nodes.  Not GL-40: at GL-20 the quadrature residual already sits ~5
-orders of magnitude below the data's own 6% precision, so further nodes buy nothing observable.
+~1.2×10⁻⁸ for twice the φ nodes — and **again to GL-40 on 2026-09-22**, once the sin(2φ) moments
+showed that an order chosen for sin(1φ) is not uniformly safe for the family (see below).
 The extra nodes turn out to be **free**: normalizing two full pipeline runs by their logged
 epochs gives 31.640 ms per epoch-line at GL-10 against 31.660 ms at GL-20, a difference of
 **+0.06%** — inside the noise.  That confirms the scaling argument above from the other side: what
@@ -862,7 +862,12 @@ dataset:
 
 Two things that came out of it.  The **sin(2φ) moments are ~40× looser** than sin(1φ) under the
 same GL-20 rule — higher harmonic, same node count — which is why the integrator order should be
-re-validated per integrand rather than assumed.  And **two observables vanish identically** with
+re-validated per integrand rather than assumed.  **The order was raised to GL-40 in response**:
+sin(1φ) improves 1.2×10⁻⁸ → 1.8×10⁻¹³ and sin(2φ) 4.8×10⁻⁷ → 7.0×10⁻¹², while GL-80 buys nothing
+further and can be *worse* past the numerical floor.  The point is not the physics — GL-20 was
+already five orders below the data's precision — but the **test**: at GL-20 a transcription bug
+below ~5×10⁻⁷ would hide inside the quadrature residual, while at GL-40 the detection threshold is
+~10⁻¹¹, which matters with 50 observables still to port.  Measured cost: **+1.26%** per epoch.  And **two observables vanish identically** with
 these CFFs, for the physical reason above; the test's relative metric was dividing noise by noise
 and reporting a spurious failure, so it now takes that statistic only where |native| > 10⁻¹² and
 says so explicitly otherwise.  That matters for the remaining 50 observables, many of which will
