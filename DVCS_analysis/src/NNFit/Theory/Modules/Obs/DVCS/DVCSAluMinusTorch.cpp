@@ -46,14 +46,22 @@ torch::Tensor DVCSAluMinusTorch::aLUTensorBatch(const torch::Tensor& xB,
 
     DVCSProcessModuleTorch* pProc = torchProcessModule();
 
-    // Hoist the phi-/helicity-independent setup out of the per-helicity
-    // calls: prepare once (N-point kinematics + one batched NN forward), then
-    // assemble sigma for each beam helicity from the cached state.
+    // Hoist the phi-/helicity-independent setup out of the per-helicity calls:
+    // prepare once (N-point kinematics + one batched NN forward), then let the
+    // variant assemble the cross sections its own formula needs from the
+    // cached state.
     pProc->prepareTensorBatch(xB, t, Q2, E);
-    torch::Tensor sigmaPlus = pProc->crossSectionTensorBatch(+1., -1., phi);
-    torch::Tensor sigmaMinus = pProc->crossSectionTensorBatch(-1., -1., phi);
+    return asymmetryTensorBatch(*pProc, phi);
+}
 
-    return (sigmaPlus - sigmaMinus) / (sigmaPlus + sigmaMinus); // [N,M]
+torch::Tensor DVCSAluMinusTorch::asymmetryTensorBatch(
+        DVCSProcessModuleTorch& proc, const torch::Tensor& phi) {
+
+    // A_LU at beam charge -1: (sigma+- - sigma--) / (sigma+- + sigma--).
+    torch::Tensor sigmaPlus  = proc.crossSectionTensorBatch(+1., -1., phi);
+    torch::Tensor sigmaMinus = proc.crossSectionTensorBatch(-1., -1., phi);
+
+    return (sigmaPlus - sigmaMinus) / (sigmaPlus + sigmaMinus);
 }
 
 torch::Tensor DVCSAluMinusTorch::computeTensorImplBatch(

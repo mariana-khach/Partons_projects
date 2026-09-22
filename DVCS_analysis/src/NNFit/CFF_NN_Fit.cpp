@@ -769,16 +769,29 @@ void CFF_NN_Fitter::observ_calc_scalar_cff(unsigned int nativeClassId,
     std::cout << "    xB        t        Q2       E        native       torch"
                  "        abs diff    rel diff\n";
 
+    // A relative difference is meaningless where the observable vanishes, and
+    // several DVCS observables vanish identically for a given CFF
+    // configuration -- e.g. A_LU^{DVCS}'s sin(phi) moment, where summing over
+    // beam charge removes the interference term and nothing beam-helicity-odd
+    // survives. Both sides then return numerical zero (~1e-17) and a ratio of
+    // noise to noise reads as a huge "error". So the relative statistic is
+    // taken only over points where the reference value is meaningfully
+    // non-zero; max |diff| is always reported and is the meaningful number in
+    // the vanishing case.
+    const double kRelFloor = 1e-12;
+
     double maxAbs = 0., maxRel = 0.;
-    int maxRelPoint = 0;
+    int maxRelPoint = 0, nRelPoints = 0;
     for (int i = 0; i < N; ++i) {
         const double nat = nativeValues[i];
         const double tor = torchValues[i].item<double>();
         const double absDiff = std::fabs(tor - nat);
-        const double relDiff = (nat != 0.) ? absDiff / std::fabs(nat) : 0.;
+        const bool   relMeaningful = std::fabs(nat) > kRelFloor;
+        const double relDiff = relMeaningful ? absDiff / std::fabs(nat) : 0.;
 
+        if (relMeaningful) ++nRelPoints;
         if (absDiff > maxAbs) maxAbs = absDiff;
-        if (relDiff > maxRel) { maxRel = relDiff; maxRelPoint = i; }
+        if (relMeaningful && relDiff > maxRel) { maxRel = relDiff; maxRelPoint = i; }
 
         std::cout << std::fixed << std::setprecision(4)
                   << "  " << std::setw(7) << X[i][0].item<double>()
@@ -794,21 +807,20 @@ void CFF_NN_Fitter::observ_calc_scalar_cff(unsigned int nativeClassId,
     std::cout << std::defaultfloat;
 
     std::cout << "\n  max |diff|     = " << maxAbs << "\n";
-    std::cout << "  max rel |diff| = " << maxRel << "  (point " << maxRelPoint
-              << ": xB=" << X[maxRelPoint][0].item<double>()
-              << ", t=" << X[maxRelPoint][1].item<double>()
-              << ", Q2=" << X[maxRelPoint][2].item<double>() << ")\n";
+    if (nRelPoints == 0) {
+        std::cout << "  max rel |diff| = n/a -- this observable vanishes "
+                     "identically here (every |native| < " << kRelFloor << "),\n"
+                     "    so max |diff| above is the meaningful number.\n";
+    } else {
+        std::cout << "  max rel |diff| = " << maxRel << "  (point " << maxRelPoint
+                  << ": xB=" << X[maxRelPoint][0].item<double>()
+                  << ", t=" << X[maxRelPoint][1].item<double>()
+                  << ", Q2=" << X[maxRelPoint][2].item<double>() << ")"
+                  << ", over " << nRelPoints << " of " << N << " points\n";
+    }
     std::cout << "  requires_grad  = "
             << (torchValues.requires_grad() ? "true" : "false")
             << " (expected false: constant CFFs carry no graph)\n";
-    // What to expect, measured 2026-09-21 on this dataset: the residual is the
-    // torch side's fixed GL-10 phi-quadrature against the scalar side's
-    // adaptive DEXP -- NOT a difference in the BMJ12 transcription. Raising the
-    // torch integrator order collapses it, which is how that was established:
-    //   GL-10 -> 4.2e-4 | GL-20 -> 1.2e-8 | GL-40 -> 1.8e-13 | GL-80 -> 1.7e-13
-    // i.e. the two independent implementations agree to double precision once
-    // phi is resolved. A rise ABOVE ~1e-3 here, or a max that does not fall
-    // when the order is raised, means something real has broken.
     // What to expect depends on which kind of leaf is under test:
     //
     //   Fourier moment  -- the residual is the torch side's fixed GL rule

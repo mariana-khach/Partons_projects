@@ -66,10 +66,10 @@ protected:
     /**
      * Reusable pointwise asymmetry A_LU(phi), batched over N data points x M
      * phi nodes. Shared by every Fourier-moment subclass: prepare once
-     * (hoisting the helicity-independent setup), assemble per helicity --
-     * driven through the same abstract DVCSProcessModuleTorch* base
-     * (prepareTensorBatch()/crossSectionTensorBatch()), no concrete
-     * process-module type needed.
+     * (hoisting the helicity-independent setup), then hand off to the
+     * asymmetryTensorBatch() hook, which assembles the cross sections its own
+     * formula needs -- driven through the abstract DVCSProcessModuleTorch*
+     * base, no concrete process-module type required.
      * @return [N,M] tensor A_LU(phi), grad-connected to the NN CFF parameters.
      */
     torch::Tensor aLUTensorBatch(const torch::Tensor& xB, const torch::Tensor& t,
@@ -102,6 +102,34 @@ protected:
 
     /** Cross-cast the attached process module to its tensor interface. */
     DVCSProcessModuleTorch* torchProcessModule();
+
+protected:
+
+    /**
+     * The asymmetry formula itself, given a process module on which
+     * prepareTensorBatch() has already run. Each A_LU variant in PARTONS is a
+     * different combination of sigma(lambda, charge), not a different
+     * sub-process selection, so this hook assembles exactly the terms its own
+     * formula needs -- mirroring the scalar classes, where each calls
+     * ProcessModule::compute() as many times as its expression requires.
+     * Writing sigma(lambda, charge):
+     *
+     *   AluMinus (this)  (s+- - s--) / (s+- + s--)
+     *   AluPlus          (s++ - s-+) / (s++ + s-+)
+     *   AluDVCS          ((s+++s+-) - (s-++s--)) / ((s+++s+-) + (s-++s--))
+     *   AluInt           ((s++-s+-) - (s-+-s--)) / ((s+++s+-) + (s-++s--))
+     *
+     * The charge SUM cancels the interference term (odd in beam charge),
+     * leaving the BH+VCS part; the charge DIFFERENCE isolates it. That is why
+     * the DVCS/Int variants need four cross sections rather than a
+     * VCSSubProcessType selector.
+     *
+     * @param proc Prepared process module (prepareTensorBatch already called).
+     * @param phi  [M] shared quadrature nodes, or [N,1] per-point own phi.
+     * @return Same shape as phi broadcast against [N]: [N,M] or [N,1].
+     */
+    virtual torch::Tensor asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
+            const torch::Tensor& phi);
 };
 
 #endif /* DVCS_ALU_MINUS_TORCH_H */

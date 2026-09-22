@@ -6,7 +6,21 @@
 #include <ElementaryUtils/logger/LoggerManager.h>
 #include <partons/Partons.h>
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAluMinus.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAluPlus.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAluDVCS.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAluInt.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAluMinusSin2Phi.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAluDVCSSin1Phi.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAluIntSin1Phi.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAluIntSin2Phi.h>
 #include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluPlusTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluDVCSTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluIntTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin2PhiTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluDVCSSin1PhiTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluIntSin1PhiTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluIntSin2PhiTorch.h"
 #include "../include/NNFit/CFF_NN_Fit.h"
 #include <chrono>
 #include <iostream>
@@ -34,9 +48,25 @@ int main(int argc, char** argv) {
 
         // Network-free differential test of the batched BMJ12 port: fixed CFFs
         // through PARTONS' native process module vs the tensor one.
-        fitter.observ_calc_scalar_cff();
+        // Every A_LU observable, checked against the PARTONS class it mirrors:
+        // identical fixed CFFs through the native chain and the tensor one.
+        fitter.observ_calc_scalar_cff();   // DVCSAluMinusSin1Phi (the default)
         fitter.observ_calc_scalar_cff(PARTONS::DVCSAluMinus::classId,
-                DVCSAluMinusTorch::classId, "DVCSAluMinus (pointwise, own phi)");
+                DVCSAluMinusTorch::classId, "DVCSAluMinus (pointwise)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSAluPlus::classId,
+                DVCSAluPlusTorch::classId, "DVCSAluPlus (pointwise)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSAluDVCS::classId,
+                DVCSAluDVCSTorch::classId, "DVCSAluDVCS (pointwise)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSAluInt::classId,
+                DVCSAluIntTorch::classId, "DVCSAluInt (pointwise)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSAluMinusSin2Phi::classId,
+                DVCSAluMinusSin2PhiTorch::classId, "DVCSAluMinusSin2Phi (moment)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSAluDVCSSin1Phi::classId,
+                DVCSAluDVCSSin1PhiTorch::classId, "DVCSAluDVCSSin1Phi (moment)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSAluIntSin1Phi::classId,
+                DVCSAluIntSin1PhiTorch::classId, "DVCSAluIntSin1Phi (moment)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSAluIntSin2Phi::classId,
+                DVCSAluIntSin2PhiTorch::classId, "DVCSAluIntSin2Phi (moment)");
 
         // Monte Carlo replica ensemble (smeared pseudodata) for a CFF
         // uncertainty band, alongside the central fit above.
