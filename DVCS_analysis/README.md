@@ -823,13 +823,62 @@ twist-2 entries; those zeros are also exactly what the torch port assumes.
 
 ---
 
+### The A_LU family, complete (2026-09-22)
+
+All nine PARTONS A_LU observables now have torch twins, each verified against the class it
+mirrors.  Four **pointwise** variants — `AluMinus`, `AluPlus`, `AluDVCS`, `AluInt` — plus five
+**Fourier moments** on top of them.
+
+The four differ by **charge combination**, not by sub-process selector, which is the thing to
+know before adding more.  Writing σ(λ, charge):
+
+| Observable | Formula |
+|---|---|
+| `AluMinus` | (σ₊₋ − σ₋₋) / (σ₊₋ + σ₋₋) |
+| `AluPlus` | (σ₊₊ − σ₋₊) / (σ₊₊ + σ₋₊) |
+| `AluDVCS` | ((σ₊₊+σ₊₋) − (σ₋₊+σ₋₋)) / ((σ₊₊+σ₊₋) + (σ₋₊+σ₋₋)) |
+| `AluInt` | ((σ₊₊−σ₊₋) − (σ₋₊−σ₋₋)) / ((σ₊₊+σ₊₋) + (σ₋₊+σ₋₋)) |
+
+The charge **sum** cancels the interference term (odd in beam charge), leaving BH+VCS — hence the
+"DVCS" label; the charge **difference** isolates it.  So `aLUTensorBatch` prepares the process
+module once and delegates to an `asymmetryTensorBatch()` hook that assembles only the cross
+sections its own formula needs, mirroring the scalar classes.
+
+Each is a **sibling** of `DVCSAluMinusTorch` rather than a subclass: every variant must *be* its
+own PARTONS observable for the scalar chain, exactly as PARTONS' own classes are siblings.
+
+**Verification** — all nine against native PARTONS with identical fixed CFFs, over the 16-point
+dataset:
+
+| Observable | Kind | max relative |
+|---|---|---|
+| `AluMinusSin1Phi` | moment | 1.2×10⁻⁸ |
+| `AluMinus`, `AluPlus`, `AluInt` | pointwise | ~3×10⁻¹⁵ |
+| `AluDVCS` | pointwise | **0** — vanishes identically |
+| `AluMinusSin2Phi` | moment | 4.8×10⁻⁷ |
+| `AluDVCSSin1Phi` | moment | vanishes identically |
+| `AluIntSin1Phi` | moment | 1.2×10⁻⁹ |
+| `AluIntSin2Phi` | moment | 1.1×10⁻⁷ |
+
+Two things that came out of it.  The **sin(2φ) moments are ~40× looser** than sin(1φ) under the
+same GL-20 rule — higher harmonic, same node count — which is why the integrator order should be
+re-validated per integrand rather than assumed.  And **two observables vanish identically** with
+these CFFs, for the physical reason above; the test's relative metric was dividing noise by noise
+and reporting a spurious failure, so it now takes that statistic only where |native| > 10⁻¹² and
+says so explicitly otherwise.  That matters for the remaining 50 observables, many of which will
+vanish in some configuration.
+
+---
+
 ## Current status / open items
 
-- **Raw per-φ A_LU leaf** — `DVCSAluMinusTorch::computeTensorImplBatch` is a throwing
-  placeholder, so a bare `DVCSAluMinusTorch` is unusable (both its tensor and its inherited
-  scalar entry points throw).  It needs own-φ `[N]` semantics rather than the shared-`[M]`
-  quadrature broadcast.  Blocks the planned dataset that fits raw per-φ A_LU instead of the
-  sin1φ moment.
+- ~~Raw per-φ A_LU leaf~~ **resolved 2026-09-22** — `DVCSAluMinusTorch::computeTensorImplBatch`
+  is implemented: φ passed as `[N,1]` instead of the moment leaves' shared `[M]` grid, which the
+  assembly already broadcasts.  The raw-per-φ dataset has nothing blocking it.
+- **Only the A_LU family is ported** — 9 of PARTONS' 59 DVCS observables.  `DVCSAc` (×5) and the
+  cross sections (×9) are reachable with the current unpolarized-target port; the 36
+  polarized-target observables need the LP/TP coefficient rows first and should be a separate
+  issue.
 - **Unpolarized-target only** on the tensor path — the torch BMJ12 port omits the LP/TP
   coefficient rows.  Correct for A_LU and siblings; for polarized-target observables use the
   base PARTONS classes.  The determining factor is the **observable leaf**, not the process

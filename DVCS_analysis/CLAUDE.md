@@ -96,7 +96,11 @@ A **fully differentiable** DVCS observable chain that runs *inside* the PARTONS 
 **Per-class-parallel observable leaves** (mirror scalar `DVCSAluMinus` → `DVCSAluMinusSin1Phi`):
 
 - **`DVCSAluMinusTorch`** (`Modules/Obs/DVCS/`) — `public PARTONS::DVCSAluMinus, public DVCSObservableTorch`. Owns the reusable pointwise asymmetry `aLUTensorBatch(xB, t, Q2, E, φ[M]) = (σ⁺−σ⁻)/(σ⁺+σ⁻)`, `[N,M]` (cross-casts `m_pProcessModule` to `DVCSProcessModuleTorch*`). It calls `prepareTensorBatch` **once**, then the lightweight `crossSectionTensorBatch(±1, −1, φ)` per helicity — so the helicity-independent setup (NN forward + BMJ12 kinematics + 72 coeffs) runs once per batch instead of twice. Its leaf hooks **are implemented** as of 2026-09-22: `computeTensorImplBatch` evaluates the pointwise A_LU(φ) at each kinematic's **own** φ, by passing φ as `[N,1]` instead of the moment leaves' shared `[M]` grid — the assembly broadcasts either shape, so no new machinery was needed. `computeTensorImpl` is the usual N=1 wrapper, and the inherited scalar `computeObservable` therefore works too. A bare `DVCSAluMinusTorch` is now a usable observable.
-- **`DVCSAluMinusSin1PhiTorch`** — `public DVCSAluMinusTorch, public MathIntegratorModuleTorch`. The only observable leaf actually wired anywhere. `computeTensorImplBatch` = the sin(1φ) Fourier moment of the inherited `aLUTensorBatch` via `integrateTorchBatch` (fixed **GL-20** — raised from 10 on 2026-09-21 after the dataset scan measured GL-10 at up to 4.2e-4 relative against the scalar DEXP path; see that session's notes); `computeTensorImpl` is a thin N=1 wrapper around it (wraps the single kinematic into a one-element `List<K>`). No diamond (single path to `PARTONS::DVCSAluMinus`; the integrator is a pure mixin). A future `DVCSAluMinusCos0PhiTorch` derives the same way and reuses `aLUTensorBatch`.
+- **The A_LU family — nine leaves, complete as of 2026-09-22.** Four **pointwise** variants, each a sibling (not a subclass: an AluPlus is not an AluMinus, so each must be its own PARTONS observable) — `DVCSAluMinusTorch`, `DVCSAluPlusTorch`, `DVCSAluDVCSTorch`, `DVCSAluIntTorch`. They differ only in their `asymmetryTensorBatch()` override, because the PARTONS variants differ by **charge combination**, not by sub-process selector. Writing σ(λ, charge): AluMinus `(s+- − s--)/(s+- + s--)`; AluPlus `(s++ − s-+)/(s++ + s-+)`; AluDVCS `((s+++s+-) − (s-++s--))/((s+++s+-) + (s-++s--))`; AluInt `((s++−s+-) − (s-+−s--))/((s+++s+-) + (s-++s--))`. The charge **sum** cancels the interference term (odd in charge), leaving BH+VCS; the charge **difference** isolates it. Five **Fourier-moment** leaves sit on top — `…Sin1PhiTorch`/`…Sin2PhiTorch` — each copying its scalar counterpart's weight and `1/π` normalization exactly.
+
+- **`DVCSAluMinusSin1PhiTorch`** — `public DVCSAluMinusTorch, public MathIntegratorModuleTorch`, the template every other moment leaf follows. `computeTensorImplBatch` = the sin(1φ) Fourier moment of the inherited `aLUTensorBatch` via `integrateTorchBatch` (fixed **GL-20** — raised from 10 on 2026-09-21 after the dataset scan measured GL-10 at up to 4.2e-4 relative against the scalar DEXP path; see that session's notes); `computeTensorImpl` is a thin N=1 wrapper around it (wraps the single kinematic into a one-element `List<K>`). No diamond (single path to `PARTONS::DVCSAluMinus`; the integrator is a pure mixin). Every other moment leaf derives the same way from its own pointwise parent and reuses that parent's `aLUTensorBatch`.
+
+⚠️ **The GL order is per-integrand, not universal.** Measured 2026-09-22 against native PARTONS with fixed CFFs: sin(1φ) moments land at ~1e-8 relative, but **sin(2φ) moments at ~5e-7** — ~40× looser under the same GL-20 rule, because the higher harmonic is less well resolved. Still five orders below the data's ~6% precision, so harmless here; re-measure before trusting GL-20 for a higher harmonic or a different integrand.
 
 **`DVCSProcessBMJ12Torch`** (`Modules/Processes/DVCS/`) — `public PARTONS::DVCSProcessBMJ12, public DVCSProcessModuleTorch`. Overrides the three batched sub-process atoms (BMJ12 in `float64` tensors; kinematics as no-grad `[N]` tensors, CFF-bilinear/linear layers in-graph) + `setupKinematicsTorchBatch` (φ-independent BMJ12 quantities, 72 angular coeffs, one batched NN forward caching the CFF tensors). Unpolarized target only.
 
@@ -952,3 +956,44 @@ This unblocks the planned raw-per-φ dataset and the four pointwise A_LU observa
 A pointwise observable integrates nothing, so the quadrature difference vanishes and what remains is floating-point rounding order. That isolates the BMJ12 transcription from every other source of disagreement: two independent implementations, agreeing to the last bit, at sixteen kinematic points.
 
 Verified in a full run: the three `observ_calc*` paths agree to every printed digit (0.114756), both differential tests as above, 10 replicas trained and exported, 271 s.
+
+---
+
+## Session notes (2026-09-22, later)
+
+### The A_LU family completed — seven new leaves
+
+Issue #16, branch `16-add-dvcs-observables`. All nine PARTONS A_LU observables now have torch twins.
+
+**The plan was wrong in one respect, caught by reading the sources first.** I had assumed `AluDVCS`/`AluInt` were sub-process selections, and designed two hooks (`beamCharge()`, `subProcess()`) around that. They are not: they are **charge combinations** built from four cross sections each. The charge sum cancels the interference term (odd in beam charge); the charge difference isolates it. So the hook became the whole asymmetry:
+
+```cpp
+virtual torch::Tensor asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
+        const torch::Tensor& phi);
+```
+
+`aLUTensorBatch` prepares once and delegates, so each variant assembles only the cross sections its formula needs — mirroring the scalar classes, where each calls `ProcessModule::compute()` as many times as its expression requires.
+
+**Siblings, not subclasses.** `DVCSAluPlusTorch`, `DVCSAluDVCSTorch` and `DVCSAluIntTorch` each derive from *their own* PARTONS class plus `DVCSObservableTorch`, repeating ~45 lines of machinery, because each must **be** its own PARTONS observable for the scalar chain — an AluPlus is not an AluMinus. A shared mixin was considered and rejected: it would add a layer the scalar side does not have, and PARTONS' own classes are siblings for exactly this reason.
+
+### Two findings from the verification
+
+**1. The GL order is per-integrand.** Against native PARTONS with fixed CFFs:
+
+| | sin(1φ) | sin(2φ) |
+|---|---|---|
+| max relative deviation | ~1.2e-8 | **~4.8e-7** |
+
+~40× looser for the higher harmonic under the same GL-20 rule. Harmless here — five orders below the data's ~6% precision — but it confirms the 2026-06-22 advice to re-validate rather than assume. A sin(3φ) moment would want checking before use.
+
+**2. Some observables vanish identically, and the test said "12.6".** `AluDVCS` and its sin(1φ) moment are exactly zero for these CFFs: summing over beam charge removes the interference term and nothing beam-helicity-odd survives. Both implementations returned numerical zero (~1e-17), and the relative metric divided noise by noise. The statistic is now taken only where `|native| > 1e-12`, with an explicit "vanishes identically" message otherwise; `max |diff|` is always reported and is the meaningful number in that case.
+
+This was worth fixing before the remaining 50 observables: many of them vanish for any given CFF configuration, and a test that cries wolf on those is worse than no test.
+
+### State of issue #16
+
+| Tier | Observables | Status |
+|---|---|---|
+| A_LU | 9 | ✅ complete |
+| A_C, cross sections | 5 + 9 | reachable with the current port — unpolarized target |
+| A_UL, A_LL, A_UT, A_LT | 36 | **blocked** — need the LP/TP coefficient rows in `setupKinematicsTorchBatch`; file separately |
