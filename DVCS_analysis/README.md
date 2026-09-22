@@ -80,6 +80,25 @@ chain.  (A `Beans/Obs/DVCS/` directory existed until 2026-06-17 and is gone — 
 
 ---
 
+## Branches
+
+Work lands on **`devel`**; `main` lags behind it.  As of **2026-09-22** `origin/devel` carries
+everything documented here: the batched torch chain (Option A), the GL-20 φ-quadrature order, the
+replica failure policy, and the CFF-link tensor interface with its scalar-model adapter.  The
+`vect_optionA` feature branch was merged there.
+
+`vectorized_calc` holds an alternative **Option B (raw-tensor)** batching experiment that was not
+taken — the shipped design pushes the batch dimension down into the existing layers instead.
+
+Note for issue tracking: the repository's default branch is `main`, and GitHub only auto-closes an
+issue when the closing commit reaches the default branch — so a `closes #N` merged into `devel`
+stays open until `devel` reaches `main`, and is normally closed by hand.
+
+Dated sections below name the branch each piece of work happened on; they are kept as written
+rather than updated when a branch merges.
+
+---
+
 ## Source files (in order of creation)
 
 ### Initial commit (2026-03-12)

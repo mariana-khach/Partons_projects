@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Branches
+
+Work lands on **`devel`**; `main` lags behind it. As of **2026-09-22** `origin/devel` contains everything described in this file — the batched torch chain (`893b5d8`, Option A), the removal of the dead single-point paths, the GL-20 φ-quadrature switch, the replica failure policy, and the CFF-link interface work. The `vect_optionA` feature branch was merged there and is now identical to `origin/devel`.
+
+Two things worth knowing before writing closing keywords in commit messages:
+
+- GitHub auto-closes an issue only when the commit reaches the **default** branch, which here is `main`. A `closes #N` that lands on `devel` leaves the issue open until `devel` → `main`, so those get closed by hand. This is why #12 stayed open for three weeks after its work was merged.
+- `vectorized_calc` holds an alternative **Option B (raw-tensor)** batching experiment that was not taken. The shipped design is Option A — batching pushed down into the existing layers rather than a separate raw-tensor entry point.
+
+The dated session notes below name the branch each piece of work happened on. Those are historical: they are not rewritten when a branch is merged or deleted.
+
 ## Build
 
 The project uses CMake with two build directories:
