@@ -46,10 +46,26 @@ public:
     /**
      * Prepare the phi-independent quantities once for N kinematic points at
      * once (BMJ12 derived quantities, angular coefficients, and one batched
-     * NN forward for the CFFs). After this, the lightweight
+     * NN forward for the CFFs). After this, the assemble-only
      * crossSectionTensorBatch(lambda, charge, phi) overloads may be called
      * repeatedly — e.g. once per beam helicity — without redoing the
      * (helicity-independent) setup.
+     *
+     * What the split is worth, measured 2026-09-22 at N=16, M=40 on the NN
+     * chain (3 runs x 300 reps): prepare 2.49-2.68 ms, one assemble 2.27-2.56
+     * ms — a ratio of 1.05-1.12, i.e. they cost the SAME. Earlier notes called
+     * the assemble "lightweight"; it is not. It evaluates BH, VCS and
+     * interference over the whole [N,M] grid, comparable work to the setup.
+     * That parity is exactly why the split pays: every avoided re-preparation
+     * costs as much as the call that remains. Per observable evaluation,
+     * dropping it would cost +34-36% for an A_LU variant (2 cross sections per
+     * prepare) and +62-65% for A_C (4).
+     *
+     * Those are process-layer figures. An epoch also pays the integrand, the
+     * chi^2 and backward(), so the end-to-end training penalty is smaller and
+     * was not measured; and the benchmark ran 300 forwards with no backward(),
+     * so autograd graphs accumulated — which inflates both sides and leaves
+     * the ratio more trustworthy than the absolute milliseconds.
      */
     void prepareTensorBatch(const torch::Tensor& xB, const torch::Tensor& t,
             const torch::Tensor& Q2, const torch::Tensor& E) {
@@ -59,8 +75,9 @@ public:
 
     /**
      * Total unpolarized-target DVCS cross section sigma(lambda, phi), batched
-     * over N data points x M phi nodes -- lightweight, assumes
-     * prepareTensorBatch() already cached the phi-independent setup.
+     * over N data points x M phi nodes -- assemble-only: assumes
+     * prepareTensorBatch() already cached the phi-independent setup. Not
+     * cheap relative to that setup; see prepareTensorBatch() for the numbers.
      */
     torch::Tensor crossSectionTensorBatch(double beamHelicity, double beamCharge,
             const torch::Tensor& phi) {
@@ -68,7 +85,7 @@ public:
                 PARTONS::VCSSubProcessType::ALL);
     }
 
-    /** Lightweight selectable batched assemble (assumes prepareTensorBatch() ran). */
+    /** Selectable batched assemble (assumes prepareTensorBatch() ran). */
     torch::Tensor crossSectionTensorBatch(double beamHelicity, double beamCharge,
             const torch::Tensor& phi, PARTONS::VCSSubProcessType::Type processType) {
 
@@ -127,7 +144,7 @@ protected:
             const torch::Tensor& t, const torch::Tensor& Q2,
             const torch::Tensor& E) = 0;
 
-    /// Set by prepareTensorBatch(); gates the lightweight batched assemble overloads.
+    /// Set by prepareTensorBatch(); gates the assemble-only batched overloads.
     bool m_preparedBatch = false;
 };
 
