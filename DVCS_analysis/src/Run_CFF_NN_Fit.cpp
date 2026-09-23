@@ -5,6 +5,14 @@
 #include <ElementaryUtils/logger/CustomException.h>
 #include <ElementaryUtils/logger/LoggerManager.h>
 #include <partons/Partons.h>
+#include <partons/modules/observable/DVCS/cross_section/DVCSCrossSectionUUMinus.h>
+#include <partons/modules/observable/DVCS/cross_section/DVCSCrossSectionDifferenceLUMinus.h>
+#include <partons/modules/observable/DVCS/cross_section/DVCSCrossSectionUUBHSubProc.h>
+#include <partons/modules/observable/DVCS/cross_section/DVCSCrossSectionUUDVCSSubProc.h>
+#include <partons/modules/observable/DVCS/cross_section/DVCSCrossSectionUUVirtualPhotoProduction.h>
+#include <partons/modules/observable/DVCS/cross_section/DVCSCrossSectionUUMinusPhiIntegrated.h>
+#include <partons/modules/observable/DVCS/cross_section/DVCSCrossSectionUUDVCSSubProcPhiIntegrated.h>
+#include <partons/modules/observable/DVCS/cross_section/DVCSCrossSectionUUVirtualPhotoProductionPhiIntegrated.h>
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAc.h>
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAcCos0Phi.h>
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAcCos1Phi.h>
@@ -18,6 +26,14 @@
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAluDVCSSin1Phi.h>
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAluIntSin1Phi.h>
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAluIntSin2Phi.h>
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUMinusTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionDifferenceLUMinusTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUBHSubProcTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUDVCSSubProcTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUVirtualPhotoProductionTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUMinusPhiIntegratedTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUDVCSSubProcPhiIntegratedTorch.h"
+#include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUVirtualPhotoProductionPhiIntegratedTorch.h"
 #include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAcTorch.h"
 #include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAcCos0PhiTorch.h"
 #include "../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAcCos1PhiTorch.h"
@@ -94,6 +110,34 @@ int main(int argc, char** argv) {
                 DVCSAcCos2PhiTorch::classId, "DVCSAcCos2Phi (moment)");
         fitter.observ_calc_scalar_cff(PARTONS::DVCSAcCos3Phi::classId,
                 DVCSAcCos3PhiTorch::classId, "DVCSAcCos3Phi (moment)");
+
+        // Cross sections -- dimensionful (nb), unlike every leaf above.
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSCrossSectionUUMinus::classId,
+                DVCSCrossSectionUUMinusTorch::classId, "DVCSCrossSectionUUMinus (pointwise)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSCrossSectionUUMinus::classId,
+                DVCSCrossSectionUUMinusTorch::classId, "DVCSCrossSectionUUMinus (phi swept)", true);
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSCrossSectionDifferenceLUMinus::classId,
+                DVCSCrossSectionDifferenceLUMinusTorch::classId, "DVCSCrossSectionDifferenceLUMinus (pointwise)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSCrossSectionDifferenceLUMinus::classId,
+                DVCSCrossSectionDifferenceLUMinusTorch::classId, "DVCSCrossSectionDifferenceLUMinus (phi swept)", true);
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSCrossSectionUUBHSubProc::classId,
+                DVCSCrossSectionUUBHSubProcTorch::classId, "DVCSCrossSectionUUBHSubProc (pointwise)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSCrossSectionUUBHSubProc::classId,
+                DVCSCrossSectionUUBHSubProcTorch::classId, "DVCSCrossSectionUUBHSubProc (phi swept)", true);
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSCrossSectionUUDVCSSubProc::classId,
+                DVCSCrossSectionUUDVCSSubProcTorch::classId, "DVCSCrossSectionUUDVCSSubProc (pointwise)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSCrossSectionUUDVCSSubProc::classId,
+                DVCSCrossSectionUUDVCSSubProcTorch::classId, "DVCSCrossSectionUUDVCSSubProc (phi swept)", true);
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSCrossSectionUUVirtualPhotoProduction::classId,
+                DVCSCrossSectionUUVirtualPhotoProductionTorch::classId, "DVCSCrossSectionUUVirtualPhotoProduction (pointwise)");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSCrossSectionUUVirtualPhotoProduction::classId,
+                DVCSCrossSectionUUVirtualPhotoProductionTorch::classId, "DVCSCrossSectionUUVirtualPhotoProduction (phi swept)", true);
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSCrossSectionUUMinusPhiIntegrated::classId,
+                DVCSCrossSectionUUMinusPhiIntegratedTorch::classId, "DVCSCrossSectionUUMinusPhiIntegrated");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSCrossSectionUUDVCSSubProcPhiIntegrated::classId,
+                DVCSCrossSectionUUDVCSSubProcPhiIntegratedTorch::classId, "DVCSCrossSectionUUDVCSSubProcPhiIntegrated");
+        fitter.observ_calc_scalar_cff(PARTONS::DVCSCrossSectionUUVirtualPhotoProductionPhiIntegrated::classId,
+                DVCSCrossSectionUUVirtualPhotoProductionPhiIntegratedTorch::classId, "DVCSCrossSectionUUVirtualPhotoProductionPhiIntegrated");
 
         // Monte Carlo replica ensemble (smeared pseudodata) for a CFF
         // uncertainty band, alongside the central fit above.

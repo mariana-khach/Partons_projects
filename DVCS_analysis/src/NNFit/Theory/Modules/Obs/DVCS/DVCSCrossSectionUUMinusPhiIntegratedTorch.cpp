@@ -1,0 +1,93 @@
+//
+// Created by Mariana Khachatryan on 9/23/26.
+//
+
+#include "NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUMinusPhiIntegratedTorch.h"
+
+#include <NumA/integration/one_dimension/IntegratorType1D.h>
+#include <partons/BaseObjectRegistry.h>
+#include <partons/FundamentalPhysicalConstants.h>
+
+#include <vector>
+
+const unsigned int DVCSCrossSectionUUMinusPhiIntegratedTorch::classId =
+        PARTONS::BaseObjectRegistry::getInstance()->registerBaseObject(
+                new DVCSCrossSectionUUMinusPhiIntegratedTorch("DVCSCrossSectionUUMinusPhiIntegratedTorch"));
+
+DVCSCrossSectionUUMinusPhiIntegratedTorch::DVCSCrossSectionUUMinusPhiIntegratedTorch(const std::string& className)
+        : DVCSCrossSectionUUMinusTorch(className), MathIntegratorModuleTorch() {
+    // GL-160 -- four times the asymmetry leaves' 40, and this leaf is the ONLY
+    // one in the family that needs it. Its integrand is the FULL cross
+    // section, so it carries the Bethe-Heitler peak at the interval ends
+    // (phi -> 0 and 2pi), which demands far more resolution than a bounded
+    // asymmetry. Measured 2026-09-23 per dataset point, against the scalar
+    // path:
+    //
+    //   order          xB=0.25, t=-0.488     points already converged
+    //   GL-40               3.0e-5                   ~5e-14
+    //   GL-80               3.0e-9                   ~3e-13
+    //   GL-160              2.8e-11                  ~3e-12
+    //   GL-320              4.1e-12                  ~1e-12
+    //
+    // Note the trade: raising the order costs a little accuracy on the points
+    // that were already converged (more nodes, more roundoff), and buys five
+    // orders on the one that was not. 160 is where that trade stops paying.
+    //
+    // Two dataset points do NOT improve at any order (8.1e-6 and 2.5e-4,
+    // identical GL-40 through GL-640). Those are the SCALAR side's: a
+    // torch-free probe -- PARTONS' own pointwise cross section integrated with
+    // GL-40/200/1000 against PARTONS' own DEXP class -- reproduces 2.4842e-04
+    // at the worst one, flat in order.
+    //
+    // Measure per point, never by the max over the dataset: that statistic sat
+    // at 2.4848e-04 from GL-40 to GL-640, pinned by the DEXP outlier, while
+    // the under-resolved point above was still converging underneath it.
+    MathIntegratorModuleTorch::setIntegrator(NumA::IntegratorType1D::GL, 160);
+}
+
+DVCSCrossSectionUUMinusPhiIntegratedTorch::DVCSCrossSectionUUMinusPhiIntegratedTorch(const DVCSCrossSectionUUMinusPhiIntegratedTorch& other)
+        : DVCSCrossSectionUUMinusTorch(other), MathIntegratorModuleTorch(other) {
+}
+
+DVCSCrossSectionUUMinusPhiIntegratedTorch::~DVCSCrossSectionUUMinusPhiIntegratedTorch() {
+}
+
+DVCSCrossSectionUUMinusPhiIntegratedTorch* DVCSCrossSectionUUMinusPhiIntegratedTorch::clone() const {
+    return new DVCSCrossSectionUUMinusPhiIntegratedTorch(*this);
+}
+
+torch::Tensor DVCSCrossSectionUUMinusPhiIntegratedTorch::computeTensorImplBatch(
+        const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics) {
+
+    // Each kinematic's own phi is ignored: this observable integrates over the
+    // full phi range regardless, as the moment leaves do.
+    const size_t N = kinematics.size();
+    std::vector<double> xBVec(N), tVec(N), Q2Vec(N), EVec(N);
+    for (size_t i = 0; i < N; ++i) {
+        const PARTONS::DVCSObservableKinematic& kin = kinematics[i];
+        xBVec[i] = kin.getXB().getValue();
+        tVec[i]  = kin.getT().getValue();
+        Q2Vec[i] = kin.getQ2().getValue();
+        EVec[i]  = kin.getE().getValue();
+    }
+    const torch::TensorOptions f64 = torch::TensorOptions().dtype(torch::kFloat64);
+    torch::Tensor xB = torch::tensor(xBVec, f64);
+    torch::Tensor t  = torch::tensor(tVec, f64);
+    torch::Tensor Q2 = torch::tensor(Q2Vec, f64);
+    torch::Tensor E  = torch::tensor(EVec, f64);
+
+    auto integrand = [this, &xB, &t, &Q2, &E](const torch::Tensor& phi) -> torch::Tensor {
+        return crossSectionNbTensorBatch(xB, t, Q2, E, phi);
+    };
+
+    // No normalization -- PARTONS::DVCSCrossSectionUUMinusPhiIntegrated returns the bare
+    // integral, unlike the Fourier moments which divide by pi or 2pi.
+    return integrateTorchBatch(integrand, 0., 2. * PARTONS::Constant::PI);
+}
+
+torch::Tensor DVCSCrossSectionUUMinusPhiIntegratedTorch::computeTensorImpl(
+        const PARTONS::DVCSObservableKinematic& kinematic) {
+    PARTONS::List<PARTONS::DVCSObservableKinematic> list;
+    list.add(kinematic);
+    return computeTensorImplBatch(list)[0];
+}
