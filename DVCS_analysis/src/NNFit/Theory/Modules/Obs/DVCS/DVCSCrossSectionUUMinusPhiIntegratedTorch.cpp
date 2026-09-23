@@ -17,11 +17,12 @@ const unsigned int DVCSCrossSectionUUMinusPhiIntegratedTorch::classId =
 DVCSCrossSectionUUMinusPhiIntegratedTorch::DVCSCrossSectionUUMinusPhiIntegratedTorch(const std::string& className)
         : DVCSCrossSectionUUMinusTorch(className), MathIntegratorModuleTorch() {
     // GL-160 -- four times the asymmetry leaves' 40, and this leaf is the ONLY
-    // one in the family that needs it. Its integrand is the FULL cross
-    // section, so it carries the Bethe-Heitler peak at the interval ends
-    // (phi -> 0 and 2pi), which demands far more resolution than a bounded
-    // asymmetry. Measured 2026-09-23 per dataset point, against the scalar
-    // path:
+    // one in the family that needs it. Its integrand is the FULL cross section,
+    // so it carries the Bethe-Heitler peak at the interval ends (phi -> 0 and
+    // 2pi; measured, the peak is ~5900x the value at phi = pi and is 99.3% BH),
+    // which demands far more resolution than a bounded asymmetry.
+    //
+    // Measured 2026-09-23 per dataset point, against the scalar path:
     //
     //   order          xB=0.25, t=-0.488     points already converged
     //   GL-40               3.0e-5                   ~5e-14
@@ -29,9 +30,12 @@ DVCSCrossSectionUUMinusPhiIntegratedTorch::DVCSCrossSectionUUMinusPhiIntegratedT
     //   GL-160              2.8e-11                  ~3e-12
     //   GL-320              4.1e-12                  ~1e-12
     //
-    // Note the trade: raising the order costs a little accuracy on the points
-    // that were already converged (more nodes, more roundoff), and buys five
-    // orders on the one that was not. 160 is where that trade stops paying.
+    // Raising the order is a TRADE, not a free win: the already-converged
+    // points get ~60x worse. That is not "more nodes, more roundoff" -- it is
+    // NumA's rule quality falling off a cliff the moment you leave GL-20/40,
+    // the only two orders it tabulates. See setIntegrator() in
+    // MathIntegratorModuleTorch.h for the defect and its size (~100x on the
+    // weights). 160 is where paying that fixed penalty stops being worth it.
     //
     // Two dataset points do NOT improve at any order (8.1e-6 and 2.5e-4,
     // identical GL-40 through GL-640). Those are the SCALAR side's: a
@@ -40,8 +44,8 @@ DVCSCrossSectionUUMinusPhiIntegratedTorch::DVCSCrossSectionUUMinusPhiIntegratedT
     // at the worst one, flat in order.
     //
     // Measure per point, never by the max over the dataset: that statistic sat
-    // at 2.4848e-04 from GL-40 to GL-640, pinned by the DEXP outlier, while
-    // the under-resolved point above was still converging underneath it.
+    // at 2.4848e-04 from GL-40 to GL-640, pinned by the DEXP outlier, while the
+    // under-resolved point above was still converging underneath it.
     MathIntegratorModuleTorch::setIntegrator(NumA::IntegratorType1D::GL, 160);
 }
 

@@ -16,10 +16,12 @@ const unsigned int DVCSCrossSectionUUDVCSSubProcPhiIntegratedTorch::classId =
 
 DVCSCrossSectionUUDVCSSubProcPhiIntegratedTorch::DVCSCrossSectionUUDVCSSubProcPhiIntegratedTorch(const std::string& className)
         : DVCSCrossSectionUUDVCSSubProcTorch(className), MathIntegratorModuleTorch() {
-    // GL-40, the same order the asymmetry leaves use -- and measured here, not
-    // inherited. This integrand is the pure-DVCS (VCS) sub-process alone,
-    // with no Bethe-Heitler term, so it has none of the endpoint peak that
-    // forces DVCSCrossSectionUUMinusPhiIntegratedTorch up to GL-160.
+    // GL-40 -- the same order the asymmetry leaves use, but measured here, not
+    // inherited. This integrand is the pure-DVCS (VCS) sub-process alone, with
+    // no Bethe-Heitler term, so it has none of the endpoint peak that forces
+    // DVCSCrossSectionUUMinusPhiIntegratedTorch up to GL-160. (Measured: the
+    // DVCS sub-process varies only ~35% across the whole phi range, against a
+    // factor ~5900 for the full cross section.)
     //
     // Per dataset point, 2026-09-23, against the scalar path:
     //
@@ -29,10 +31,13 @@ DVCSCrossSectionUUDVCSSubProcPhiIntegratedTorch::DVCSCrossSectionUUDVCSSubProcPh
     //   GL-160             8.6e-13             unchanged
     //   GL-320             7.3e-13             unchanged
     //
-    // Raising the order only makes it WORSE: the residuals that remain are
-    // flat at every order, so they belong to the scalar side's DEXP, while our
-    // own error grows ~200x from GL-40 to GL-160 as extra nodes accumulate
-    // roundoff. 40 is already the right answer for this integrand.
+    // Raising the order only makes it WORSE. The residuals that remain are flat
+    // at every order, so they are the scalar side's DEXP and no rule of ours
+    // will move them -- while our own error jumps ~40x at 40 -> 80 and stays
+    // there. That jump is not roundoff from extra nodes: 40 is the largest
+    // order NumA tabulates, and every order above it uses a Newton solver whose
+    // weights are ~100x worse (see setIntegrator() in
+    // MathIntegratorModuleTorch.h). 40 is already the right answer here.
     MathIntegratorModuleTorch::setIntegrator(NumA::IntegratorType1D::GL, 40);
 }
 
