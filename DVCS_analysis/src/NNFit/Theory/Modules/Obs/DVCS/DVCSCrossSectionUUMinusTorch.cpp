@@ -44,7 +44,7 @@ DVCSProcessModuleTorch* DVCSCrossSectionUUMinusTorch::torchProcessModule() {
     return pProc;
 }
 
-torch::Tensor DVCSCrossSectionUUMinusTorch::crossSectionNbTensorBatch(const torch::Tensor& xB,
+PARTONS::PhysicalType<torch::Tensor> DVCSCrossSectionUUMinusTorch::crossSectionNbTensorBatch(const torch::Tensor& xB,
         const torch::Tensor& t, const torch::Tensor& Q2,
         const torch::Tensor& E, const torch::Tensor& phi) {
 
@@ -52,23 +52,31 @@ torch::Tensor DVCSCrossSectionUUMinusTorch::crossSectionNbTensorBatch(const torc
     pProc->prepareTensorBatch(xB, t, Q2, E);
 
     // Both beam helicities at charge -1, summed as PARTONS::DVCSCrossSectionUUMinus does.
-    torch::Tensor A = pProc->crossSectionTensorBatch(+1., -1., phi,
+    PARTONS::PhysicalType<torch::Tensor> A = pProc->crossSectionTensorBatch(+1., -1., phi,
             PARTONS::VCSSubProcessType::ALL);
-    torch::Tensor B = pProc->crossSectionTensorBatch(-1., -1., phi,
+    PARTONS::PhysicalType<torch::Tensor> B = pProc->crossSectionTensorBatch(-1., -1., phi,
             PARTONS::VCSSubProcessType::ALL);
 
     // The beam is UNPOLARIZED, so the helicities are AVERAGED (/2) -- where an
     // asymmetry would divide by their sum. The 2pi integrates out the
     // transversely-polarized-target azimuth, turning the 5-fold differential
     // cross section into the 4-fold one PARTONS reports.
-    torch::Tensor sigma = (A + B) / 2.;
-    sigma = sigma * (2. * PARTONS::Constant::PI);
+    // The beam is UNPOLARIZED, so the helicities are AVERAGED (/2) -- where an
+    // asymmetry would divide by their sum. The 2pi integrates out the
+    // transversely-polarized-target azimuth, turning the 5-fold differential
+    // cross section into the 4-fold one PARTONS reports. (/2 then x2pi = xPI.)
+    // The + is unit-checked: two GeV^-2 terms.
+    PARTONS::PhysicalType<torch::Tensor> sum = A + B;
+    PARTONS::PhysicalType<torch::Tensor> sigma(
+            sum.getValue() * PARTONS::Constant::PI, sum.getUnit());
 
-    // GeV^-2 -> nb, the conversion makeSameUnitAs(PhysicalUnit::NB) performs.
-    return sigma * PARTONS::Constant::CONV_GEVm2_TO_NBARN;
+    // GeV^-2 -> nb. Now that the value is unit-tagged this is the SAME call
+    // PARTONS makes, rather than a hand-copied CONV_GEVm2_TO_NBARN: the
+    // conversion is declared, not transcribed, and cannot drift from PARTONS'.
+    return sigma.makeSameUnitAs(PARTONS::PhysicalUnit::NB);
 }
 
-torch::Tensor DVCSCrossSectionUUMinusTorch::computeTensorImplBatch(
+PARTONS::PhysicalType<torch::Tensor> DVCSCrossSectionUUMinusTorch::computeTensorImplBatch(
         const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics) {
 
     const size_t N = kinematics.size();
@@ -88,20 +96,28 @@ torch::Tensor DVCSCrossSectionUUMinusTorch::computeTensorImplBatch(
     torch::Tensor E   = torch::tensor(EVec, f64);
     torch::Tensor phi = torch::tensor(phiVec, f64).unsqueeze(1); // [N] -> [N,1]
 
-    return crossSectionNbTensorBatch(xB, t, Q2, E, phi).squeeze(1);
+    PARTONS::PhysicalType<torch::Tensor> r =
+            crossSectionNbTensorBatch(xB, t, Q2, E, phi);
+    return PARTONS::PhysicalType<torch::Tensor>(r.getValue().squeeze(1),
+            r.getUnit()); // [N,1] -> [N]
 }
 
-torch::Tensor DVCSCrossSectionUUMinusTorch::computeTensorImpl(
+PARTONS::PhysicalType<torch::Tensor> DVCSCrossSectionUUMinusTorch::computeTensorImpl(
         const PARTONS::DVCSObservableKinematic& kinematic) {
     PARTONS::List<PARTONS::DVCSObservableKinematic> list;
     list.add(kinematic);
-    return computeTensorImplBatch(list)[0];
+    PARTONS::PhysicalType<torch::Tensor> r = computeTensorImplBatch(list);
+    return PARTONS::PhysicalType<torch::Tensor>(r.getValue()[0], r.getUnit());
 }
 
 PARTONS::PhysicalType<double> DVCSCrossSectionUUMinusTorch::computeObservable(
         const PARTONS::DVCSObservableKinematic& kinematic,
         const PARTONS::List<PARTONS::GPDType>& gpdType) {
     torch::NoGradGuard no_grad;
-    double value = computeTensor(kinematic).item<double>();
-    return PARTONS::PhysicalType<double>(value, PARTONS::PhysicalUnit::NB);
+    ObservableResultTorch<PARTONS::DVCSObservableKinematic> r =
+            computeTensor(kinematic);
+    // The unit is taken FROM the tensor result rather than hardcoded here, so
+    // the two paths cannot disagree about what this observable returns.
+    return PARTONS::PhysicalType<double>(r.getTensor().item<double>(),
+            r.getUnit());
 }

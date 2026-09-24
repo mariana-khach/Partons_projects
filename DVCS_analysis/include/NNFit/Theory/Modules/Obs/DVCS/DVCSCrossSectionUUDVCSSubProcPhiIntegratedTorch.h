@@ -7,6 +7,8 @@
 
 #include <partons/beans/List.h>
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
+#include <partons/utils/type/PhysicalType.h>
+#include <partons/utils/type/PhysicalUnit.h>
 #include <torch/torch.h>
 
 #include <string>
@@ -48,10 +50,10 @@ protected:
 
     DVCSCrossSectionUUDVCSSubProcPhiIntegratedTorch(const DVCSCrossSectionUUDVCSSubProcPhiIntegratedTorch& other);
 
-    torch::Tensor computeTensorImpl(
+    PARTONS::PhysicalType<torch::Tensor> computeTensorImpl(
             const PARTONS::DVCSObservableKinematic& kinematic) override;
 
-    torch::Tensor computeTensorImplBatch(
+    PARTONS::PhysicalType<torch::Tensor> computeTensorImplBatch(
             const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics)
             override;
 };

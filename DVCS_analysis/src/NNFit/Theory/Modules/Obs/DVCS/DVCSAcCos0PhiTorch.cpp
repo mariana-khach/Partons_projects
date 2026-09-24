@@ -32,7 +32,7 @@ DVCSAcCos0PhiTorch* DVCSAcCos0PhiTorch::clone() const {
     return new DVCSAcCos0PhiTorch(*this);
 }
 
-torch::Tensor DVCSAcCos0PhiTorch::computeTensorImplBatch(
+PARTONS::PhysicalType<torch::Tensor> DVCSAcCos0PhiTorch::computeTensorImplBatch(
         const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics) {
 
     const size_t N = kinematics.size();
@@ -53,16 +53,18 @@ torch::Tensor DVCSAcCos0PhiTorch::computeTensorImplBatch(
     // n = 0 is the plain average: no weight, and the 1/(2 pi) normalization
     // that distinguishes the zeroth Fourier coefficient from the rest.
     auto integrand = [this, &xB, &t, &Q2, &E](const torch::Tensor& phi) -> torch::Tensor {
-        return aCTensorBatch(xB, t, Q2, E, phi);
+        return aCTensorBatch(xB, t, Q2, E, phi).getValue();
     };
 
-    return integrateTorchBatch(integrand, 0., 2. * PARTONS::Constant::PI)
-            / (2. * PARTONS::Constant::PI);
+    return PARTONS::PhysicalType<torch::Tensor>(
+            integrateTorchBatch(integrand, 0., 2. * PARTONS::Constant::PI)
+                    / (2. * PARTONS::Constant::PI), PARTONS::PhysicalUnit::NONE);
 }
 
-torch::Tensor DVCSAcCos0PhiTorch::computeTensorImpl(
+PARTONS::PhysicalType<torch::Tensor> DVCSAcCos0PhiTorch::computeTensorImpl(
         const PARTONS::DVCSObservableKinematic& kinematic) {
     PARTONS::List<PARTONS::DVCSObservableKinematic> list;
     list.add(kinematic);
-    return computeTensorImplBatch(list)[0];
+    PARTONS::PhysicalType<torch::Tensor> r = computeTensorImplBatch(list);
+    return PARTONS::PhysicalType<torch::Tensor>(r.getValue()[0], r.getUnit());
 }

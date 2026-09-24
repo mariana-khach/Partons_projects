@@ -60,7 +60,7 @@ protected:
      * Moment subclasses override this with their Fourier integral instead.
      * @return 0-d torch::Tensor, grad-connected to the NN parameters.
      */
-    torch::Tensor computeTensorImpl(
+    PARTONS::PhysicalType<torch::Tensor> computeTensorImpl(
             const PARTONS::DVCSObservableKinematic& kinematic) override;
 
     /**
@@ -72,7 +72,7 @@ protected:
      * base, no concrete process-module type required.
      * @return [N,M] tensor A_LU(phi), grad-connected to the NN CFF parameters.
      */
-    torch::Tensor aLUTensorBatch(const torch::Tensor& xB, const torch::Tensor& t,
+    PARTONS::PhysicalType<torch::Tensor> aLUTensorBatch(const torch::Tensor& xB, const torch::Tensor& t,
             const torch::Tensor& Q2, const torch::Tensor& E,
             const torch::Tensor& phi);
 
@@ -91,7 +91,7 @@ protected:
      * O(N^2) diagonal extraction, which earlier notes assumed would be needed.
      * Cheaper than a moment: same operation count with M = 1 rather than 20.
      */
-    torch::Tensor computeTensorImplBatch(
+    PARTONS::PhysicalType<torch::Tensor> computeTensorImplBatch(
             const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics)
             override;
 
@@ -128,7 +128,7 @@ protected:
      * @param phi  [M] shared quadrature nodes, or [N,1] per-point own phi.
      * @return Same shape as phi broadcast against [N]: [N,M] or [N,1].
      */
-    virtual torch::Tensor asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
+    virtual PARTONS::PhysicalType<torch::Tensor> asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
             const torch::Tensor& phi);
 };
 

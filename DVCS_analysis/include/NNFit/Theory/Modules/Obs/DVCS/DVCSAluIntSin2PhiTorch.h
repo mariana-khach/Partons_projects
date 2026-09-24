@@ -7,6 +7,8 @@
 
 #include <partons/beans/List.h>
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
+#include <partons/utils/type/PhysicalType.h>
+#include <partons/utils/type/PhysicalUnit.h>
 #include <torch/torch.h>
 
 #include <string>
@@ -45,7 +47,7 @@ protected:
     DVCSAluIntSin2PhiTorch(const DVCSAluIntSin2PhiTorch& other);
 
     /** N=1 wrapper over computeTensorImplBatch(). */
-    torch::Tensor computeTensorImpl(
+    PARTONS::PhysicalType<torch::Tensor> computeTensorImpl(
             const PARTONS::DVCSObservableKinematic& kinematic) override;
 
     /**
@@ -54,7 +56,7 @@ protected:
      * the full phi range) and reduces the parent's aLUTensorBatch() over the
      * shared quadrature grid.
      */
-    torch::Tensor computeTensorImplBatch(
+    PARTONS::PhysicalType<torch::Tensor> computeTensorImplBatch(
             const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics)
             override;
 };

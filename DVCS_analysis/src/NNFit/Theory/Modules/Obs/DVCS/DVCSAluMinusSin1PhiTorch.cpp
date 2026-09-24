@@ -57,7 +57,7 @@ DVCSAluMinusSin1PhiTorch* DVCSAluMinusSin1PhiTorch::clone() const {
     return new DVCSAluMinusSin1PhiTorch(*this);
 }
 
-torch::Tensor DVCSAluMinusSin1PhiTorch::computeTensorImpl(
+PARTONS::PhysicalType<torch::Tensor> DVCSAluMinusSin1PhiTorch::computeTensorImpl(
         const PARTONS::DVCSObservableKinematic& kinematic) {
 
     // Thin N=1 wrapper around computeTensorImplBatch(): wrap the single
@@ -65,10 +65,11 @@ torch::Tensor DVCSAluMinusSin1PhiTorch::computeTensorImpl(
     // no field extraction) and delegate.
     PARTONS::List<PARTONS::DVCSObservableKinematic> list;
     list.add(kinematic);
-    return computeTensorImplBatch(list)[0];
+    PARTONS::PhysicalType<torch::Tensor> r = computeTensorImplBatch(list);
+    return PARTONS::PhysicalType<torch::Tensor>(r.getValue()[0], r.getUnit());
 }
 
-torch::Tensor DVCSAluMinusSin1PhiTorch::computeTensorImplBatch(
+PARTONS::PhysicalType<torch::Tensor> DVCSAluMinusSin1PhiTorch::computeTensorImplBatch(
         const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics) {
 
     // Unpack the channel-generic bean list into raw [N] tensors. Each
@@ -92,9 +93,10 @@ torch::Tensor DVCSAluMinusSin1PhiTorch::computeTensorImplBatch(
     // A_LU(phi) * sin(phi), batched over N data points x the GL-10 quadrature
     // nodes shared by every data point.
     auto integrand = [this, &xB, &t, &Q2, &E](const torch::Tensor& phi) -> torch::Tensor {
-        return aLUTensorBatch(xB, t, Q2, E, phi) * torch::sin(phi);
+        return aLUTensorBatch(xB, t, Q2, E, phi).getValue() * torch::sin(phi);
     };
 
-    return integrateTorchBatch(integrand, 0., 2. * PARTONS::Constant::PI)
-            / PARTONS::Constant::PI;
+    return PARTONS::PhysicalType<torch::Tensor>(
+            integrateTorchBatch(integrand, 0., 2. * PARTONS::Constant::PI)
+                    / PARTONS::Constant::PI, PARTONS::PhysicalUnit::NONE);
 }

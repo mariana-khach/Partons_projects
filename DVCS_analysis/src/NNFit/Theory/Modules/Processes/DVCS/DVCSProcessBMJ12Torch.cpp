@@ -10,6 +10,8 @@
 
 #include "NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.h"
 
+#include <partons/utils/type/PhysicalUnit.h>
+
 #include <ElementaryUtils/logger/CustomException.h>
 #include <partons/BaseObjectRegistry.h>
 #include <partons/FundamentalPhysicalConstants.h>
@@ -652,7 +654,7 @@ torch::Tensor DVCSProcessBMJ12Torch::S_I0nBatch(unsigned int n, int a, int b) co
 // Batched cross section sigma(lambda, phi), [N,M] (N data points x M phi nodes)
 // ---------------------------------------------------------------------------
 
-torch::Tensor DVCSProcessBMJ12Torch::crossSectionBHTensorBatch(double beamHelicity,
+PARTONS::PhysicalType<torch::Tensor> DVCSProcessBMJ12Torch::crossSectionBHTensorBatch(double beamHelicity,
         double beamCharge, const torch::Tensor& phi) {
 
     (void) beamHelicity;
@@ -674,10 +676,12 @@ torch::Tensor DVCSProcessBMJ12Torch::crossSectionBHTensorBatch(double beamHelici
     torch::Tensor denomConst =
             bc(m_xB2Batch * m_yBMJBatch[1] * m_epsrootBatch[3] * m_tBatch); // [N,1]
     torch::Tensor A_BH = e6 / (denomConst * P1 * P2); // [N,M]
-    return bc(m_phaseSpaceBMJBatch) * A_BH * sqrBH; // [N,M]
+    return PARTONS::PhysicalType<torch::Tensor>(
+            bc(m_phaseSpaceBMJBatch) * A_BH * sqrBH, // [N,M]
+            PARTONS::PhysicalUnit::GEVm2);
 }
 
-torch::Tensor DVCSProcessBMJ12Torch::crossSectionVCSTensorBatch(double beamHelicity,
+PARTONS::PhysicalType<torch::Tensor> DVCSProcessBMJ12Torch::crossSectionVCSTensorBatch(double beamHelicity,
         double beamCharge, const torch::Tensor& phi) {
 
     (void) beamCharge; // VCS is independent of beam charge.
@@ -709,10 +713,12 @@ torch::Tensor DVCSProcessBMJ12Torch::crossSectionVCSTensorBatch(double beamHelic
     torch::Tensor A_VCS = e6 / (m_yBMJBatch[1] * m_Q2Batch); // [N]
     torch::Tensor sqrVCS = bc(cVCS0) * cosn(0) + bc(cVCS1) * cosn(1)
             + bc(cVCS2) * cosn(2) + bc(sVCS1) * sinn(1); // [N,M]
-    return bc(m_phaseSpaceBMJBatch) * bc(A_VCS) * sqrVCS; // [N,M]
+    return PARTONS::PhysicalType<torch::Tensor>(
+            bc(m_phaseSpaceBMJBatch) * bc(A_VCS) * sqrVCS, // [N,M]
+            PARTONS::PhysicalUnit::GEVm2);
 }
 
-torch::Tensor DVCSProcessBMJ12Torch::crossSectionInterfTensorBatch(
+PARTONS::PhysicalType<torch::Tensor> DVCSProcessBMJ12Torch::crossSectionInterfTensorBatch(
         double beamHelicity, double beamCharge, const torch::Tensor& phi) {
 
     auto bc = [](const torch::Tensor& x) { return x.unsqueeze(1); }; // [N] -> [N,1]
@@ -747,5 +753,7 @@ torch::Tensor DVCSProcessBMJ12Torch::crossSectionInterfTensorBatch(
     torch::Tensor sqrI = bc(cI[0]) * cosn(0) + bc(cI[1]) * cosn(1)
             + bc(cI[2]) * cosn(2) + bc(cI[3]) * cosn(3)
             + bc(sI[1]) * sinn(1) + bc(sI[2]) * sinn(2); // [N,M]
-    return bc(m_phaseSpaceBMJBatch) * A_I * sqrI; // [N,M]
+    return PARTONS::PhysicalType<torch::Tensor>(
+            bc(m_phaseSpaceBMJBatch) * A_I * sqrI, // [N,M]
+            PARTONS::PhysicalUnit::GEVm2);
 }

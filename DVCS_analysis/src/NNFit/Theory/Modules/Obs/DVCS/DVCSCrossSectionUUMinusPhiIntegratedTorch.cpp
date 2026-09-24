@@ -60,7 +60,7 @@ DVCSCrossSectionUUMinusPhiIntegratedTorch* DVCSCrossSectionUUMinusPhiIntegratedT
     return new DVCSCrossSectionUUMinusPhiIntegratedTorch(*this);
 }
 
-torch::Tensor DVCSCrossSectionUUMinusPhiIntegratedTorch::computeTensorImplBatch(
+PARTONS::PhysicalType<torch::Tensor> DVCSCrossSectionUUMinusPhiIntegratedTorch::computeTensorImplBatch(
         const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics) {
 
     // Each kinematic's own phi is ignored: this observable integrates over the
@@ -81,17 +81,20 @@ torch::Tensor DVCSCrossSectionUUMinusPhiIntegratedTorch::computeTensorImplBatch(
     torch::Tensor E  = torch::tensor(EVec, f64);
 
     auto integrand = [this, &xB, &t, &Q2, &E](const torch::Tensor& phi) -> torch::Tensor {
-        return crossSectionNbTensorBatch(xB, t, Q2, E, phi);
+        return crossSectionNbTensorBatch(xB, t, Q2, E, phi).getValue();
     };
 
     // No normalization -- PARTONS::DVCSCrossSectionUUMinusPhiIntegrated returns the bare
     // integral, unlike the Fourier moments which divide by pi or 2pi.
-    return integrateTorchBatch(integrand, 0., 2. * PARTONS::Constant::PI);
+    return PARTONS::PhysicalType<torch::Tensor>(
+            integrateTorchBatch(integrand, 0., 2. * PARTONS::Constant::PI),
+            PARTONS::PhysicalUnit::NB);   // a phi-integrated CROSS SECTION
 }
 
-torch::Tensor DVCSCrossSectionUUMinusPhiIntegratedTorch::computeTensorImpl(
+PARTONS::PhysicalType<torch::Tensor> DVCSCrossSectionUUMinusPhiIntegratedTorch::computeTensorImpl(
         const PARTONS::DVCSObservableKinematic& kinematic) {
     PARTONS::List<PARTONS::DVCSObservableKinematic> list;
     list.add(kinematic);
-    return computeTensorImplBatch(list)[0];
+    PARTONS::PhysicalType<torch::Tensor> r = computeTensorImplBatch(list);
+    return PARTONS::PhysicalType<torch::Tensor>(r.getValue()[0], r.getUnit());
 }

@@ -32,7 +32,7 @@ DVCSAcCos3PhiTorch* DVCSAcCos3PhiTorch::clone() const {
     return new DVCSAcCos3PhiTorch(*this);
 }
 
-torch::Tensor DVCSAcCos3PhiTorch::computeTensorImplBatch(
+PARTONS::PhysicalType<torch::Tensor> DVCSAcCos3PhiTorch::computeTensorImplBatch(
         const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics) {
 
     const size_t N = kinematics.size();
@@ -52,16 +52,18 @@ torch::Tensor DVCSAcCos3PhiTorch::computeTensorImplBatch(
 
     // Weight cos(3phi), normalization 1/pi -- as in PARTONS::DVCSAcCos3Phi.
     auto integrand = [this, &xB, &t, &Q2, &E](const torch::Tensor& phi) -> torch::Tensor {
-        return aCTensorBatch(xB, t, Q2, E, phi) * torch::cos(3. * phi);
+        return aCTensorBatch(xB, t, Q2, E, phi).getValue() * torch::cos(3. * phi);
     };
 
-    return integrateTorchBatch(integrand, 0., 2. * PARTONS::Constant::PI)
-            / PARTONS::Constant::PI;
+    return PARTONS::PhysicalType<torch::Tensor>(
+            integrateTorchBatch(integrand, 0., 2. * PARTONS::Constant::PI)
+                    / PARTONS::Constant::PI, PARTONS::PhysicalUnit::NONE);
 }
 
-torch::Tensor DVCSAcCos3PhiTorch::computeTensorImpl(
+PARTONS::PhysicalType<torch::Tensor> DVCSAcCos3PhiTorch::computeTensorImpl(
         const PARTONS::DVCSObservableKinematic& kinematic) {
     PARTONS::List<PARTONS::DVCSObservableKinematic> list;
     list.add(kinematic);
-    return computeTensorImplBatch(list)[0];
+    PARTONS::PhysicalType<torch::Tensor> r = computeTensorImplBatch(list);
+    return PARTONS::PhysicalType<torch::Tensor>(r.getValue()[0], r.getUnit());
 }

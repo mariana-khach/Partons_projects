@@ -32,7 +32,7 @@ DVCSAluIntSin1PhiTorch* DVCSAluIntSin1PhiTorch::clone() const {
     return new DVCSAluIntSin1PhiTorch(*this);
 }
 
-torch::Tensor DVCSAluIntSin1PhiTorch::computeTensorImplBatch(
+PARTONS::PhysicalType<torch::Tensor> DVCSAluIntSin1PhiTorch::computeTensorImplBatch(
         const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics) {
 
     const size_t N = kinematics.size();
@@ -52,16 +52,18 @@ torch::Tensor DVCSAluIntSin1PhiTorch::computeTensorImplBatch(
 
     // A_LU(phi) * sin(1phi), batched over N points x the shared GL nodes.
     auto integrand = [this, &xB, &t, &Q2, &E](const torch::Tensor& phi) -> torch::Tensor {
-        return aLUTensorBatch(xB, t, Q2, E, phi) * torch::sin(1. * phi);
+        return aLUTensorBatch(xB, t, Q2, E, phi).getValue() * torch::sin(1. * phi);
     };
 
-    return integrateTorchBatch(integrand, 0., 2. * PARTONS::Constant::PI)
-            / PARTONS::Constant::PI;
+    return PARTONS::PhysicalType<torch::Tensor>(
+            integrateTorchBatch(integrand, 0., 2. * PARTONS::Constant::PI)
+                    / PARTONS::Constant::PI, PARTONS::PhysicalUnit::NONE);
 }
 
-torch::Tensor DVCSAluIntSin1PhiTorch::computeTensorImpl(
+PARTONS::PhysicalType<torch::Tensor> DVCSAluIntSin1PhiTorch::computeTensorImpl(
         const PARTONS::DVCSObservableKinematic& kinematic) {
     PARTONS::List<PARTONS::DVCSObservableKinematic> list;
     list.add(kinematic);
-    return computeTensorImplBatch(list)[0];
+    PARTONS::PhysicalType<torch::Tensor> r = computeTensorImplBatch(list);
+    return PARTONS::PhysicalType<torch::Tensor>(r.getValue()[0], r.getUnit());
 }

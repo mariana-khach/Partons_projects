@@ -48,12 +48,12 @@ public:
      * Pointwise asymmetry at each kinematic's OWN phi, batched over N points.
      * See DVCSAluMinusTorch for why phi's shape selects the mode.
      */
-    torch::Tensor computeTensorImplBatch(
+    PARTONS::PhysicalType<torch::Tensor> computeTensorImplBatch(
             const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics)
             override;
 
     /** N=1 wrapper over computeTensorImplBatch(). */
-    torch::Tensor computeTensorImpl(
+    PARTONS::PhysicalType<torch::Tensor> computeTensorImpl(
             const PARTONS::DVCSObservableKinematic& kinematic) override;
 
     /**
@@ -61,7 +61,7 @@ public:
      * each point's own phi. Prepares the process module once, then delegates
      * the formula to asymmetryTensorBatch().
      */
-    torch::Tensor aLUTensorBatch(const torch::Tensor& xB, const torch::Tensor& t,
+    PARTONS::PhysicalType<torch::Tensor> aLUTensorBatch(const torch::Tensor& xB, const torch::Tensor& t,
             const torch::Tensor& Q2, const torch::Tensor& E,
             const torch::Tensor& phi);
 
@@ -78,7 +78,7 @@ protected:
     DVCSAluIntTorch(const DVCSAluIntTorch& other);
 
     /** The asymmetry formula; see the class brief. */
-    virtual torch::Tensor asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
+    virtual PARTONS::PhysicalType<torch::Tensor> asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
             const torch::Tensor& phi);
 };
 

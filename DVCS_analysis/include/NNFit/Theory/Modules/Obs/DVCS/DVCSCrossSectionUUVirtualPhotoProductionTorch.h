@@ -46,12 +46,12 @@ public:
     virtual DVCSCrossSectionUUVirtualPhotoProductionTorch* clone() const override;
 
     /** Pointwise cross section at each kinematic's OWN phi, batched over N. */
-    torch::Tensor computeTensorImplBatch(
+    PARTONS::PhysicalType<torch::Tensor> computeTensorImplBatch(
             const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics)
             override;
 
     /** N=1 wrapper over computeTensorImplBatch(). */
-    torch::Tensor computeTensorImpl(
+    PARTONS::PhysicalType<torch::Tensor> computeTensorImpl(
             const PARTONS::DVCSObservableKinematic& kinematic) override;
 
     /**
@@ -60,7 +60,7 @@ public:
      * aLUTensorBatch()/aCTensorBatch(). The phi-integrated subclass uses it as
      * its integrand, exactly as the Fourier-moment leaves use theirs.
      */
-    torch::Tensor crossSectionNbTensorBatch(const torch::Tensor& xB,
+    PARTONS::PhysicalType<torch::Tensor> crossSectionNbTensorBatch(const torch::Tensor& xB,
             const torch::Tensor& t, const torch::Tensor& Q2,
             const torch::Tensor& E, const torch::Tensor& phi);
 

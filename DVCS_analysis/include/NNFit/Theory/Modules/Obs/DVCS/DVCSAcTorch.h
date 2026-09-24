@@ -46,12 +46,12 @@ public:
     virtual DVCSAcTorch* clone() const override;
 
     /** Pointwise A_C at each kinematic's OWN phi, batched over N points. */
-    torch::Tensor computeTensorImplBatch(
+    PARTONS::PhysicalType<torch::Tensor> computeTensorImplBatch(
             const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics)
             override;
 
     /** N=1 wrapper over computeTensorImplBatch(). */
-    torch::Tensor computeTensorImpl(
+    PARTONS::PhysicalType<torch::Tensor> computeTensorImpl(
             const PARTONS::DVCSObservableKinematic& kinematic) override;
 
     /**
@@ -59,7 +59,7 @@ public:
      * [N,1] at each point's own phi. Named aCTensorBatch to match the family
      * it belongs to; the A_LU classes call theirs aLUTensorBatch.
      */
-    torch::Tensor aCTensorBatch(const torch::Tensor& xB, const torch::Tensor& t,
+    PARTONS::PhysicalType<torch::Tensor> aCTensorBatch(const torch::Tensor& xB, const torch::Tensor& t,
             const torch::Tensor& Q2, const torch::Tensor& E,
             const torch::Tensor& phi);
 
@@ -76,7 +76,7 @@ protected:
     DVCSAcTorch(const DVCSAcTorch& other);
 
     /** The asymmetry formula; see the class brief. */
-    virtual torch::Tensor asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
+    virtual PARTONS::PhysicalType<torch::Tensor> asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
             const torch::Tensor& phi);
 };
 

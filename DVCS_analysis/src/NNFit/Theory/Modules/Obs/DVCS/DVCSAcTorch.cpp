@@ -42,7 +42,7 @@ DVCSProcessModuleTorch* DVCSAcTorch::torchProcessModule() {
     return pProc;
 }
 
-torch::Tensor DVCSAcTorch::aCTensorBatch(const torch::Tensor& xB,
+PARTONS::PhysicalType<torch::Tensor> DVCSAcTorch::aCTensorBatch(const torch::Tensor& xB,
         const torch::Tensor& t, const torch::Tensor& Q2,
         const torch::Tensor& E, const torch::Tensor& phi) {
 
@@ -51,24 +51,24 @@ torch::Tensor DVCSAcTorch::aCTensorBatch(const torch::Tensor& xB,
     return asymmetryTensorBatch(*pProc, phi);
 }
 
-torch::Tensor DVCSAcTorch::asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
+PARTONS::PhysicalType<torch::Tensor> DVCSAcTorch::asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
         const torch::Tensor& phi) {
 
     // Sum over beam helicity for each charge (unpolarized beam), then the
     // charge asymmetry. The helicity sum cancels the beam-spin-odd part; the
     // charge difference then isolates the interference term.
-    torch::Tensor sPP = proc.crossSectionTensorBatch(+1., +1., phi);
-    torch::Tensor sMP = proc.crossSectionTensorBatch(-1., +1., phi);
-    torch::Tensor sPM = proc.crossSectionTensorBatch(+1., -1., phi);
-    torch::Tensor sMM = proc.crossSectionTensorBatch(-1., -1., phi);
+    PARTONS::PhysicalType<torch::Tensor> sPP = proc.crossSectionTensorBatch(+1., +1., phi);
+    PARTONS::PhysicalType<torch::Tensor> sMP = proc.crossSectionTensorBatch(-1., +1., phi);
+    PARTONS::PhysicalType<torch::Tensor> sPM = proc.crossSectionTensorBatch(+1., -1., phi);
+    PARTONS::PhysicalType<torch::Tensor> sMM = proc.crossSectionTensorBatch(-1., -1., phi);
 
-    torch::Tensor plusCharge  = sPP + sMP;
-    torch::Tensor minusCharge = sPM + sMM;
+    PARTONS::PhysicalType<torch::Tensor> plusCharge = sPP + sMP;
+    PARTONS::PhysicalType<torch::Tensor> minusCharge = sPM + sMM;
 
     return (plusCharge - minusCharge) / (plusCharge + minusCharge);
 }
 
-torch::Tensor DVCSAcTorch::computeTensorImplBatch(
+PARTONS::PhysicalType<torch::Tensor> DVCSAcTorch::computeTensorImplBatch(
         const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics) {
 
     const size_t N = kinematics.size();
@@ -88,20 +88,27 @@ torch::Tensor DVCSAcTorch::computeTensorImplBatch(
     torch::Tensor E   = torch::tensor(EVec, f64);
     torch::Tensor phi = torch::tensor(phiVec, f64).unsqueeze(1);
 
-    return aCTensorBatch(xB, t, Q2, E, phi).squeeze(1);
+    PARTONS::PhysicalType<torch::Tensor> r = aCTensorBatch(xB, t, Q2, E, phi);
+    return PARTONS::PhysicalType<torch::Tensor>(r.getValue().squeeze(1),
+            r.getUnit()); // [N,1] -> [N]
 }
 
-torch::Tensor DVCSAcTorch::computeTensorImpl(
+PARTONS::PhysicalType<torch::Tensor> DVCSAcTorch::computeTensorImpl(
         const PARTONS::DVCSObservableKinematic& kinematic) {
     PARTONS::List<PARTONS::DVCSObservableKinematic> list;
     list.add(kinematic);
-    return computeTensorImplBatch(list)[0];
+    PARTONS::PhysicalType<torch::Tensor> r = computeTensorImplBatch(list);
+    return PARTONS::PhysicalType<torch::Tensor>(r.getValue()[0], r.getUnit());
 }
 
 PARTONS::PhysicalType<double> DVCSAcTorch::computeObservable(
         const PARTONS::DVCSObservableKinematic& kinematic,
         const PARTONS::List<PARTONS::GPDType>& gpdType) {
     torch::NoGradGuard no_grad;
-    double value = computeTensor(kinematic).item<double>();
-    return PARTONS::PhysicalType<double>(value, PARTONS::PhysicalUnit::NONE);
+    ObservableResultTorch<PARTONS::DVCSObservableKinematic> r =
+            computeTensor(kinematic);
+    // The unit is taken FROM the tensor result rather than hardcoded here, so
+    // the two paths cannot disagree about what this observable returns.
+    return PARTONS::PhysicalType<double>(r.getTensor().item<double>(),
+            r.getUnit());
 }

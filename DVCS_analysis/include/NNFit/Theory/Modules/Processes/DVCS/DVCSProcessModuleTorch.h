@@ -8,6 +8,8 @@
 #include <ElementaryUtils/logger/CustomException.h>
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
 #include <partons/beans/process/VCSSubProcessType.h>
+#include <partons/utils/type/PhysicalType.h>
+#include <partons/utils/type/PhysicalUnit.h>
 #include <torch/torch.h>
 
 #include "NNFit/Theory/Modules/Processes/ProcessModuleTorch.h"
@@ -74,20 +76,21 @@ public:
     }
 
     /**
-     * Total unpolarized-target DVCS cross section sigma(lambda, phi), batched
-     * over N data points x M phi nodes -- assemble-only: assumes
+     * Total unpolarized-target DVCS cross section sigma(lambda, phi) in
+     * GeV^-2, batched over N data points x M phi nodes -- assemble-only: assumes
      * prepareTensorBatch() already cached the phi-independent setup. Not
      * cheap relative to that setup; see prepareTensorBatch() for the numbers.
      */
-    torch::Tensor crossSectionTensorBatch(double beamHelicity, double beamCharge,
-            const torch::Tensor& phi) {
+    PARTONS::PhysicalType<torch::Tensor> crossSectionTensorBatch(
+            double beamHelicity, double beamCharge, const torch::Tensor& phi) {
         return crossSectionTensorBatch(beamHelicity, beamCharge, phi,
                 PARTONS::VCSSubProcessType::ALL);
     }
 
     /** Selectable batched assemble (assumes prepareTensorBatch() ran). */
-    torch::Tensor crossSectionTensorBatch(double beamHelicity, double beamCharge,
-            const torch::Tensor& phi, PARTONS::VCSSubProcessType::Type processType) {
+    PARTONS::PhysicalType<torch::Tensor> crossSectionTensorBatch(
+            double beamHelicity, double beamCharge, const torch::Tensor& phi,
+            PARTONS::VCSSubProcessType::Type processType) {
 
         if (!m_preparedBatch) {
             throw ElemUtils::CustomException("DVCSProcessModuleTorch", __func__,
@@ -95,42 +98,46 @@ public:
                     "prepareTensorBatch(); no phi-independent setup is cached.");
         }
 
-        torch::Tensor sigma;
+        // Accumulated as PhysicalType, exactly as DVCSProcessModule::compute
+        // does with its PhysicalType<double> value(0., PhysicalUnit::GEVm2):
+        // the += are unit-checked, so a sub-process that returned the wrong
+        // unit throws here instead of silently contributing a wrong number.
+        PARTONS::PhysicalType<torch::Tensor> sigma;
         bool any = false;
+        auto add = [&](const PARTONS::PhysicalType<torch::Tensor>& v) {
+            if (any) { sigma = sigma + v; } else { sigma = v; any = true; }
+        };
 
         if (processType == PARTONS::VCSSubProcessType::ALL
                 || processType == PARTONS::VCSSubProcessType::DVCS) {
-            torch::Tensor v = crossSectionVCSTensorBatch(beamHelicity, beamCharge, phi);
-            sigma = any ? sigma + v : v;
-            any = true;
+            add(crossSectionVCSTensorBatch(beamHelicity, beamCharge, phi));
         }
         if (processType == PARTONS::VCSSubProcessType::ALL
                 || processType == PARTONS::VCSSubProcessType::BH) {
-            torch::Tensor v = crossSectionBHTensorBatch(beamHelicity, beamCharge, phi);
-            sigma = any ? sigma + v : v;
-            any = true;
+            add(crossSectionBHTensorBatch(beamHelicity, beamCharge, phi));
         }
         if (processType == PARTONS::VCSSubProcessType::ALL
                 || processType == PARTONS::VCSSubProcessType::INT) {
-            torch::Tensor v = crossSectionInterfTensorBatch(beamHelicity, beamCharge, phi);
-            sigma = any ? sigma + v : v;
-            any = true;
+            add(crossSectionInterfTensorBatch(beamHelicity, beamCharge, phi));
         }
 
         return sigma;
     }
 
-    /** Batched Bethe-Heitler sub-process sigma_BH(phi), [N,M]. */
-    virtual torch::Tensor crossSectionBHTensorBatch(double beamHelicity,
-            double beamCharge, const torch::Tensor& phi) = 0;
+    /** Batched Bethe-Heitler sub-process sigma_BH(phi), [N,M], GeV^-2. */
+    virtual PARTONS::PhysicalType<torch::Tensor> crossSectionBHTensorBatch(
+            double beamHelicity, double beamCharge,
+            const torch::Tensor& phi) = 0;
 
-    /** Batched pure-DVCS (VCS) sub-process sigma_VCS(phi), [N,M]. */
-    virtual torch::Tensor crossSectionVCSTensorBatch(double beamHelicity,
-            double beamCharge, const torch::Tensor& phi) = 0;
+    /** Batched pure-DVCS (VCS) sub-process sigma_VCS(phi), [N,M], GeV^-2. */
+    virtual PARTONS::PhysicalType<torch::Tensor> crossSectionVCSTensorBatch(
+            double beamHelicity, double beamCharge,
+            const torch::Tensor& phi) = 0;
 
-    /** Batched interference sub-process sigma_I(phi), [N,M]. */
-    virtual torch::Tensor crossSectionInterfTensorBatch(double beamHelicity,
-            double beamCharge, const torch::Tensor& phi) = 0;
+    /** Batched interference sub-process sigma_I(phi), [N,M], GeV^-2. */
+    virtual PARTONS::PhysicalType<torch::Tensor> crossSectionInterfTensorBatch(
+            double beamHelicity, double beamCharge,
+            const torch::Tensor& phi) = 0;
 
 protected:
 

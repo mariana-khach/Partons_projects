@@ -40,7 +40,7 @@ DVCSProcessModuleTorch* DVCSAluMinusTorch::torchProcessModule() {
     return pProc;
 }
 
-torch::Tensor DVCSAluMinusTorch::aLUTensorBatch(const torch::Tensor& xB,
+PARTONS::PhysicalType<torch::Tensor> DVCSAluMinusTorch::aLUTensorBatch(const torch::Tensor& xB,
         const torch::Tensor& t, const torch::Tensor& Q2,
         const torch::Tensor& E, const torch::Tensor& phi) {
 
@@ -54,17 +54,22 @@ torch::Tensor DVCSAluMinusTorch::aLUTensorBatch(const torch::Tensor& xB,
     return asymmetryTensorBatch(*pProc, phi);
 }
 
-torch::Tensor DVCSAluMinusTorch::asymmetryTensorBatch(
+PARTONS::PhysicalType<torch::Tensor> DVCSAluMinusTorch::asymmetryTensorBatch(
         DVCSProcessModuleTorch& proc, const torch::Tensor& phi) {
 
     // A_LU at beam charge -1: (sigma+- - sigma--) / (sigma+- + sigma--).
-    torch::Tensor sigmaPlus  = proc.crossSectionTensorBatch(+1., -1., phi);
-    torch::Tensor sigmaMinus = proc.crossSectionTensorBatch(-1., -1., phi);
+    PARTONS::PhysicalType<torch::Tensor> sigmaPlus =
+            proc.crossSectionTensorBatch(+1., -1., phi);   // GeV^-2
+    PARTONS::PhysicalType<torch::Tensor> sigmaMinus =
+            proc.crossSectionTensorBatch(-1., -1., phi);   // GeV^-2
 
+    // PhysicalType's operator/ tags the quotient PhysicalUnit::NONE, so the
+    // asymmetry comes out dimensionless by DERIVATION rather than by
+    // assertion -- and the +/- above are unit-checked.
     return (sigmaPlus - sigmaMinus) / (sigmaPlus + sigmaMinus);
 }
 
-torch::Tensor DVCSAluMinusTorch::computeTensorImplBatch(
+PARTONS::PhysicalType<torch::Tensor> DVCSAluMinusTorch::computeTensorImplBatch(
         const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics) {
 
     // Pointwise A_LU(phi): each kinematic evaluated at ITS OWN phi, unlike the
@@ -98,10 +103,12 @@ torch::Tensor DVCSAluMinusTorch::computeTensorImplBatch(
     torch::Tensor E   = torch::tensor(EVec, f64);
     torch::Tensor phi = torch::tensor(phiVec, f64).unsqueeze(1); // [N] -> [N,1]
 
-    return aLUTensorBatch(xB, t, Q2, E, phi).squeeze(1); // [N,1] -> [N]
+    PARTONS::PhysicalType<torch::Tensor> r = aLUTensorBatch(xB, t, Q2, E, phi);
+    return PARTONS::PhysicalType<torch::Tensor>(r.getValue().squeeze(1),
+            r.getUnit()); // [N,1] -> [N]
 }
 
-torch::Tensor DVCSAluMinusTorch::computeTensorImpl(
+PARTONS::PhysicalType<torch::Tensor> DVCSAluMinusTorch::computeTensorImpl(
         const PARTONS::DVCSObservableKinematic& kinematic) {
 
     // Thin N=1 wrapper around computeTensorImplBatch(), mirroring
@@ -109,7 +116,8 @@ torch::Tensor DVCSAluMinusTorch::computeTensorImpl(
     // this base class -- computeTensorImplBatch() throws (see its doc comment).
     PARTONS::List<PARTONS::DVCSObservableKinematic> list;
     list.add(kinematic);
-    return computeTensorImplBatch(list)[0];
+    PARTONS::PhysicalType<torch::Tensor> r = computeTensorImplBatch(list);
+    return PARTONS::PhysicalType<torch::Tensor>(r.getValue()[0], r.getUnit());
 }
 
 PARTONS::PhysicalType<double> DVCSAluMinusTorch::computeObservable(
@@ -117,6 +125,10 @@ PARTONS::PhysicalType<double> DVCSAluMinusTorch::computeObservable(
         const PARTONS::List<PARTONS::GPDType>& gpdType) {
 
     torch::NoGradGuard no_grad;
-    double value = computeTensor(kinematic).item<double>();
-    return PARTONS::PhysicalType<double>(value, PARTONS::PhysicalUnit::NONE);
+    ObservableResultTorch<PARTONS::DVCSObservableKinematic> r =
+            computeTensor(kinematic);
+    // The unit is taken FROM the tensor result rather than hardcoded here, so
+    // the two paths cannot disagree about what this observable returns.
+    return PARTONS::PhysicalType<double>(r.getTensor().item<double>(),
+            r.getUnit());
 }

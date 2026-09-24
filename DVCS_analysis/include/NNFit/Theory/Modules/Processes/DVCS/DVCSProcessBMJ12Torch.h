@@ -8,6 +8,8 @@
 #include <partons/beans/gpd/GPDType.h>
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
 #include <partons/modules/process/DVCS/DVCSProcessBMJ12.h>
+#include <partons/utils/type/PhysicalType.h>
+#include <partons/utils/type/PhysicalUnit.h>
 #include <torch/torch.h>
 
 #include <string>
@@ -53,11 +55,14 @@ public:
     // / CrossSectionInterf). Each assumes the phi-independent setup has run;
     // the base crossSectionTensorBatch() template method drives setup + the
     // selected sum.
-    torch::Tensor crossSectionBHTensorBatch(double beamHelicity, double beamCharge,
+    PARTONS::PhysicalType<torch::Tensor> crossSectionBHTensorBatch(
+            double beamHelicity, double beamCharge,
             const torch::Tensor& phi) override;
-    torch::Tensor crossSectionVCSTensorBatch(double beamHelicity, double beamCharge,
+    PARTONS::PhysicalType<torch::Tensor> crossSectionVCSTensorBatch(
+            double beamHelicity, double beamCharge,
             const torch::Tensor& phi) override;
-    torch::Tensor crossSectionInterfTensorBatch(double beamHelicity, double beamCharge,
+    PARTONS::PhysicalType<torch::Tensor> crossSectionInterfTensorBatch(
+            double beamHelicity, double beamCharge,
             const torch::Tensor& phi) override;
 
 protected:

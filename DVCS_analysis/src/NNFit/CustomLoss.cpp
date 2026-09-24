@@ -83,7 +83,8 @@ torch::Tensor CustomLossImpl::forward(
     // Observable through the differentiable batched chain — grad-connected to
     // the NN, one call for all N points (no per-row bean construction here;
     // the list was already built once by the caller -- see fit_once()).
-    torch::Tensor pred = m_pServiceTorch->computeManyKinematicTorch(kinematics, m_pObsTorch);
+    torch::Tensor pred = m_pServiceTorch->computeManyKinematicTorch(kinematics,
+            m_pObsTorch).getTensor();
 
     torch::Tensor resid = (pred - y_obs.to(kF64)) / sigma.to(kF64);
     torch::Tensor chi2 = (resid * resid).sum();

@@ -9,6 +9,7 @@
 #include <partons/beans/List.h>
 #include <torch/torch.h>
 
+#include "NNFit/Theory/Beans/Obs/ObservableResultTorch.h"
 #include "NNFit/Theory/Modules/Obs/ObservableTorch.h"
 
 /**
@@ -21,7 +22,7 @@
  * twin of `pObservable->compute(...)` — taking a base ObservableTorch pointer so
  * it drives any tensor observable of the channel polymorphically (like the
  * scalar service taking Observable<K,R>*). The result type collapses to
- * torch::Tensor, so only KinematicType is templated.
+ * ObservableResultTorch<K>, so only KinematicType is templated.
  *
  * Intended as a mixin alongside the channel PARTONS service, e.g.
  *   class DVCSObservableServiceTorch
@@ -38,15 +39,17 @@ public:
     /**
      * Differentiable single-kinematic computation.
      *
-     * Mirrors the scalar computeSingleKinematic() but returns the observable's
-     * tensor result instead of a scalar bean, so gradients propagate from the
-     * returned tensor back to the NN parameters that parametrize the CFFs.
+     * Mirrors the scalar computeSingleKinematic(), returning a result bean as
+     * it does — but one carrying a live torch::Tensor rather than a detached
+     * double, so gradients propagate from the returned value back to the NN
+     * parameters that parametrize the CFFs.
      *
      * @param kinematic   Observable kinematics.
      * @param pObservable Tensor observable to drive (base-typed for polymorphism).
-     * @return 0-d torch::Tensor holding the observable value.
+     * @return Result bean holding a 0-d unit-tagged tensor.
      */
-    torch::Tensor computeSingleKinematicTorch(const KinematicType& kinematic,
+    ObservableResultTorch<KinematicType> computeSingleKinematicTorch(
+            const KinematicType& kinematic,
             ObservableTorch<KinematicType>* pObservable) const {
 
         if (!pObservable) {
@@ -67,9 +70,10 @@ public:
      *
      * @param kinematics  List of N observable kinematics.
      * @param pObservable Tensor observable to drive (base-typed for polymorphism).
-     * @return [N] torch::Tensor holding the observable values.
+     * @return Result bean holding an [N] unit-tagged tensor plus the
+     *         kinematics it was evaluated at.
      */
-    torch::Tensor computeManyKinematicTorch(
+    ObservableResultTorch<KinematicType> computeManyKinematicTorch(
             const PARTONS::List<KinematicType>& kinematics,
             ObservableTorch<KinematicType>* pObservable) const {
 
