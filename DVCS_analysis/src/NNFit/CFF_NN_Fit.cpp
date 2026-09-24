@@ -55,16 +55,33 @@ CFF_NN_Fitter::CFF_NN_Fitter(const std::string& data_path,
       m_output_layer(output_layer),
       m_xPow(x_pow) {}
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
-        torch::Tensor> CFF_NN_Fitter::load_data_observable() const {
+CFF_NN_Fitter::ObservableData CFF_NN_Fitter::load_data_observable() const {
 
     std::ifstream file(m_data_path);
     if (!file.is_open())
         throw std::runtime_error("Cannot open data file: " + m_data_path);
 
-    // Skip header row
+    // The header is PARSED, not skipped: its 6th field names the observable
+    // and so selects what the fit computes. See ObservableData in the header.
     std::string line;
-    std::getline(file, line);
+    if (!std::getline(file, line))
+        throw std::runtime_error("Empty data file: " + m_data_path);
+
+    std::vector<std::string> cols;
+    {   // files are CRLF in this dataset, so strip a trailing carriage return
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        std::stringstream hs(line);
+        std::string h;
+        while (std::getline(hs, h, '|')) cols.push_back(h);
+    }
+    if (cols.size() != 7 || cols[6] != "error") {
+        throw std::runtime_error("Bad header in " + m_data_path + ": expected "
+                "7 fields 'xB|t|Q2|E|phi|<observable>|error', got '" + line
+                + "'. Only files carrying an error column can be fitted -- "
+                "without it sigma would be read from the observable column "
+                "itself.");
+    }
+    const std::string observableName = cols[5];
 
     // Read rows
     std::vector<std::vector<float>> rows;
@@ -98,10 +115,11 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
         sigma[i] = rows[i].back();      // last column: "error"
     }
 
-    return {X, E, phi, y_obs, sigma};
+    return {X, E, phi, y_obs, sigma, observableName};
 }
 
-CFF_NN_Fitter::FitOutcome CFF_NN_Fitter::fit_once(const torch::Tensor& X,
+CFF_NN_Fitter::FitOutcome CFF_NN_Fitter::fit_once(
+        const std::string& observableName, const torch::Tensor& X,
         const torch::Tensor& E, const torch::Tensor& phi,
         const torch::Tensor& y_obs, const torch::Tensor& sigma, bool smear,
         const std::string& learning_curve_path, float hopeless_val_loss,
@@ -185,7 +203,8 @@ CFF_NN_Fitter::FitOutcome CFF_NN_Fitter::fit_once(const torch::Tensor& X,
 
     // chi^2 loss on the observable, evaluated through the differentiable *Torch
     // chain. Shares `net` (optimizer updates propagate); scaling matches observ_calc*.
-    CustomLoss loss_fn(net, m_output_layer, X_min, X_max, m_xPow, normalize_loss);
+    CustomLoss loss_fn(net, m_output_layer, observableName, X_min, X_max,
+            m_xPow, normalize_loss);
 
     // Early stopping parameters
     const int patience       = 1000;
@@ -289,12 +308,14 @@ CFF_NN_Fitter::FitOutcome CFF_NN_Fitter::fit_once(const torch::Tensor& X,
 
 void CFF_NN_Fitter::train_nn() {
 
-    auto [X, E, phi, y_obs, sigma] = load_data_observable();
+    const ObservableData data = load_data_observable();
+    const torch::Tensor &X = data.X, &E = data.E, &phi = data.phi,
+            &y_obs = data.y_obs, &sigma = data.sigma;
 
     // Central (unsmeared) fit — no hopeless-abort/retry (hopeless_check_epoch=0
     // disables the periodic threshold check; matches this method's original
     // always-run-to-completion-or-early-stop behavior).
-    FitOutcome outcome = fit_once(X, E, phi, y_obs, sigma, /*smear=*/false,
+    FitOutcome outcome = fit_once(data.observableName, X, E, phi, y_obs, sigma, /*smear=*/false,
             OUT_DIR + "/cff_learning_curve.csv",
             /*hopeless_val_loss=*/std::numeric_limits<float>::max(),
             /*hopeless_check_epoch=*/0, /*seed=*/std::random_device{}());
@@ -309,7 +330,9 @@ void CFF_NN_Fitter::train_replicas(int n_replicas, int max_tries_per_replica,
         float hopeless_val_loss, int hopeless_check_epoch,
         unsigned base_seed, bool normalize_loss) {
 
-    auto [X, E, phi, y_obs, sigma] = load_data_observable();
+    const ObservableData data = load_data_observable();
+    const torch::Tensor &X = data.X, &E = data.E, &phi = data.phi,
+            &y_obs = data.y_obs, &sigma = data.sigma;
 
     m_replicas.clear();
     m_replicas.reserve(n_replicas);
@@ -333,7 +356,7 @@ void CFF_NN_Fitter::train_replicas(int n_replicas, int max_tries_per_replica,
                     ? std::random_device{}()
                     : base_seed + static_cast<unsigned>(r) * 100u
                             + static_cast<unsigned>(attempt);
-            outcome = fit_once(X, E, phi, y_obs, sigma, /*smear=*/true,
+            outcome = fit_once(data.observableName, X, E, phi, y_obs, sigma, /*smear=*/true,
                     curve_path, hopeless_val_loss, hopeless_check_epoch,
                     seed, normalize_loss);
             if (!outcome.hopeless) break;
@@ -371,7 +394,9 @@ void CFF_NN_Fitter::predict() {
 
     using namespace PARTONS;
 
-    auto [X, E, phi, y_obs, sigma] = load_data_observable();
+    const ObservableData data = load_data_observable();
+    const torch::Tensor &X = data.X, &E = data.E, &phi = data.phi,
+            &y_obs = data.y_obs, &sigma = data.sigma;
     int n = static_cast<int>(X.size(0));
 
     // Wire the *Torch chain with the trained model — same as observ_calc_torch().
@@ -394,9 +419,11 @@ void CFF_NN_Fitter::predict() {
     DVCSProcessModule* pDVCSProcess =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSProcessModule(
                     DVCSProcessBMJ12Torch::classId);
+    // Same observable the fit used: taken from the data file's header, not
+    // hardcoded, so training and prediction cannot drift apart.
     DVCSObservable* pDVCSObs =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
-                    DVCSAluMinusSin1PhiTorch::classId);
+                    data.observableName + "Torch");
 
     pDVCSCFF->setQCDOrderType(PerturbativeQCDOrderType::LO);
     pDVCSProcess->setXiConverterModule(pDVCSXiConverter);
@@ -741,7 +768,9 @@ void CFF_NN_Fitter::observ_calc_scalar_cff(unsigned int nativeClassId,
     // hide. The torch side goes through computeManyKinematicTorch, so this also
     // exercises the batched [N,M] path -- every other verification in this file
     // runs at N=1, where a broadcasting mistake would not show.
-    auto [X, E_data, phi_data, y_obs, sigma] = load_data_observable();
+    const ObservableData data = load_data_observable();
+    const torch::Tensor &X = data.X, &E_data = data.E,
+            &phi_data = data.phi, &y_obs = data.y_obs, &sigma = data.sigma;
     const int N = static_cast<int>(X.size(0));
 
     // With spread_phi the phi column is replaced by an even sweep of [0, 2pi)

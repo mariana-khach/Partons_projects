@@ -5,6 +5,7 @@
 #include "../../include/NNFit/CustomLoss.h"
 
 #include <ElementaryUtils/logger/CustomException.h>
+#include <ElementaryUtils/string_utils/Formatter.h>
 #include <partons/beans/PerturbativeQCDOrderType.h>
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
 #include <partons/modules/convol_coeff_function/DVCS/DVCSConvolCoeffFunctionModule.h>
@@ -26,7 +27,8 @@ const torch::TensorOptions kF64 = torch::TensorOptions().dtype(torch::kFloat64);
 } // namespace
 
 CustomLossImpl::CustomLossImpl(CFFNNModel net,
-        const std::vector<std::string>& outputLayer, const torch::Tensor& xMin,
+        const std::vector<std::string>& outputLayer,
+        const std::string& observableName, const torch::Tensor& xMin,
         const torch::Tensor& xMax, double xPow, bool normalize)
         : m_normalize(normalize) {
 
@@ -50,9 +52,27 @@ CustomLossImpl::CustomLossImpl(CFFNNModel net,
             Partons::getInstance()->getModuleObjectFactory()->newDVCSProcessModule(
                     DVCSProcessBMJ12Torch::classId);
 
-    DVCSObservable* pObs =
-            Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
-                    DVCSAluMinusSin1PhiTorch::classId);
+    // The observable comes from the DATA FILE's header, not from this file.
+    // The tensor leaf is the PARTONS class name + "Torch".
+    const std::string torchClassName = observableName + "Torch";
+    DVCSObservable* pObs = 0;
+    try {
+        pObs = Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
+                torchClassName);
+    } catch (const ElemUtils::CustomException&) {
+        // PARTONS' own message names only torchClassName -- a string the user
+        // never typed, since the "Torch" suffix is appended here. Say where the
+        // name came from, and separate the two causes: a misspelled header, or
+        // an observable with no tensor twin (most of them: the polarized-target
+        // sector is not ported).
+        throw ElemUtils::CustomException("CustomLossImpl", __func__,
+                ElemUtils::Formatter()
+                        << "Data file header names observable '"
+                        << observableName << "', but no tensor twin '"
+                        << torchClassName << "' is registered. Either the name "
+                        << "is misspelled, or that observable is not ported to "
+                        << "the torch chain.");
+    }
 
     pCFF->setQCDOrderType(PerturbativeQCDOrderType::LO);
 

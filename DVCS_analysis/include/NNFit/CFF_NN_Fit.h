@@ -175,11 +175,34 @@ private:
     float m_best_val_loss = -1.f;    // reduced val chi2 (chi2/n_val) of the snapshot stored in m_net
     std::vector<TrainedModel> m_replicas;
 
+    /**
+     * One observable-format data file: xB|t|Q2|E|phi|<observable>|error.
+     *
+     * observableName is the header's 6th field, and it SELECTS THE OBSERVABLE
+     * THE FIT COMPUTES -- the tensor leaf is that name + "Torch". Before this
+     * existed the header was read and discarded while CustomLoss hardcoded
+     * DVCSAluMinusSin1PhiTorch, so pointing the fitter at a file of A_C data
+     * silently fitted A_LU to it and reported only a poor chi^2.
+     *
+     * The name must therefore be the PARTONS scalar observable CLASS name
+     * (DVCSAluMinusSin1Phi, DVCSAcCos0Phi, ...), not a free-form label. The
+     * scalar name rather than the torch one because the file then describes
+     * physics rather than our implementation, and because it yields both
+     * classIds: the native one for observ_calc_scalar_cff() and the tensor
+     * twin by appending "Torch".
+     */
+    struct ObservableData {
+        torch::Tensor X;        ///< [N,3] = (xB, t, Q2)
+        torch::Tensor E;        ///< [N]
+        torch::Tensor phi;      ///< [N]
+        torch::Tensor y_obs;    ///< [N], header field 6
+        torch::Tensor sigma;    ///< [N], header field 7 ("error")
+        std::string observableName;
+    };
+
     // Load observable-format CSV: xB|t|Q2|E|phi|<observable>|error.
-    // Returns {X[N,3]=(xB,t,Q2), E[N], phi[N], y_obs[N]=col 5, sigma[N]=last col}.
     // Used for training directly on observable data via CustomLoss.
-    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
-            torch::Tensor> load_data_observable() const;
+    ObservableData load_data_observable() const;
 
     // One fully independent fit attempt: if smear, draws
     // y_used = y_obs + N(0, sigma) before the train/val split; otherwise
@@ -195,7 +218,8 @@ private:
     // MC smear draw) and the train/val shuffle RNG, for reproducibility.
     // normalize_loss is forwarded to CustomLoss (see train_replicas()).
     struct FitOutcome { TrainedModel model; bool hopeless; };
-    FitOutcome fit_once(const torch::Tensor& X, const torch::Tensor& E,
+    FitOutcome fit_once(const std::string& observableName,
+            const torch::Tensor& X, const torch::Tensor& E,
             const torch::Tensor& phi, const torch::Tensor& y_obs,
             const torch::Tensor& sigma, bool smear,
             const std::string& learning_curve_path,
