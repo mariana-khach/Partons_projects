@@ -7,7 +7,7 @@
 #include "../../include/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.h"
 #include "../../include/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFScalarTorch.h"
 #include <partons/modules/convol_coeff_function/DVCS/DVCSCFFConstant.h>
-#include "../../include/NNFit/Theory/Beans/Obs/ObservableResultTorch.h"
+#include "../../include/NNFit/Theory/Beans/Obs/DVCS/DVCSObservableResultTorch.h"
 #include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSObservableTorch.h"
 #include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusTorch.h"
 #include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.h"
@@ -765,7 +765,7 @@ void CFF_NN_Fitter::observ_calc_scalar_cff(unsigned int nativeClassId,
     // unit alongside the tensor; print it, since a cross-section leaf returns
     // nb where an asymmetry returns NONE, and a silent mismatch between the
     // two sides' units would otherwise show up only as a factor ~3.9e5.
-    ObservableResultTorch<DVCSObservableKinematic> torchResult =
+    DVCSObservableResultTorch torchResult =
             pServiceTorch->computeManyKinematicTorch(kinematics, pObsTorchB);
     torch::Tensor torchValues = torchResult.getTensor();
 

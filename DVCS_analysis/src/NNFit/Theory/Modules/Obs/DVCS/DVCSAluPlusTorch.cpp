@@ -2,6 +2,7 @@
 // Created by Mariana Khachatryan on 9/22/26.
 //
 
+#include "NNFit/Theory/Beans/Obs/DVCS/DVCSObservableResultTorch.h"
 #include "NNFit/Theory/Modules/Obs/DVCS/DVCSAluPlusTorch.h"
 
 #include <ElementaryUtils/logger/CustomException.h>
@@ -106,7 +107,7 @@ PARTONS::PhysicalType<double> DVCSAluPlusTorch::computeObservable(
         const PARTONS::DVCSObservableKinematic& kinematic,
         const PARTONS::List<PARTONS::GPDType>& gpdType) {
     torch::NoGradGuard no_grad;
-    ObservableResultTorch<PARTONS::DVCSObservableKinematic> r =
+    DVCSObservableResultTorch r =
             computeTensor(kinematic);
     // The unit is taken FROM the tensor result rather than hardcoded here, so
     // the two paths cannot disagree about what this observable returns.
