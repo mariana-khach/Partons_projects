@@ -341,7 +341,8 @@ a drop-in for the scalar pipeline.  `DVCSCFFNNPytorch` was also renamed **`DVCSC
 in this rework.
 
 **Generic, channel-agnostic templates** (tensor twins of PARTONS' `Observable<K,R>` /
-`ProcessModule<K,R>` / `ObservableService<K,R>`; `ResultType` collapses to `torch::Tensor`,
+`ProcessModule<K,R>` / `ObservableService<K,R>`; `ResultType` collapses to `torch::Tensor`
+(to `ObservableResultTorch<K>` as of 2026-09-23 — see that section),
 so only `KinematicType` is templated):
 
 - **`ObservableTorch<K>`** — NVI idiom mirroring scalar `compute`/`computeObservable`:
@@ -984,6 +985,61 @@ if it matters — we only *read* NumA's nodes and weights — but it sharpens th
 changing any physics, so it is not done.
 
 
+### Units carried through the tensor chain (2026-09-23)
+
+The torch chain returned bare tensors while the scalar chain carries `PhysicalType<double>`
+internally — `DVCSProcessModule::compute` accumulates into a
+`PhysicalType<double> value(0., PhysicalUnit::GEVm2)`.  That was the **last place the two chains
+differed in shape**, and it began to matter with the cross sections: the first dimensionful
+observables, whose GeV⁻² → nb step nothing checked.
+
+`PhysicalType` is a plain template with no constraint on its value type, and its members
+instantiate lazily, so `PhysicalType<torch::Tensor>` needs no patch to PARTONS.  That was an
+expectation rather than a result, so it was **verified before anything was built on it**:
+`operator+` and `makeSameUnitAs` preserve `requires_grad`, `backward()` reaches the leaf with the
+exact chain-rule factor (12·C = 4672551.6), and `checkIfSameUnitAs` fires on a mismatch.  A
+`torch::Tensor` is a refcounted handle, so `PhysicalType`'s by-value storage shares the graph
+rather than copying it.
+
+**What it looks like now:**
+
+| Layer | Returns |
+|---|---|
+| `computeSingleKinematicTorch` / `computeManyKinematicTorch` | `ObservableResultTorch<K>` |
+| `computeTensor` / `computeTensorBatch` | `ObservableResultTorch<K>` |
+| `computeTensorImpl` / `computeTensorImplBatch` | `PhysicalType<torch::Tensor>` |
+| `crossSectionBH/VCS/InterfTensorBatch` | `PhysicalType<torch::Tensor>` (GeV⁻²) |
+
+`ObservableResultTorch<K>` (alias `DVCSObservableResultTorch`) is a **sibling** of PARTONS'
+`ObservableResult`, not an instantiation: that class's payload is a hardcoded
+`PhysicalType<double>` with no template parameter for the value type, and its base `Result<K>`
+holds a *singular* kinematic and needs `operator<` and a `const toString()` that `List<K>` lacks.
+One bean per **batch**, where the scalar `computeManyKinematic` returns one per point.
+
+**Two payoffs beyond the check itself.**  Asymmetries get their unit **derived rather than
+asserted** — `PhysicalType::operator/` tags every quotient `NONE`, so `(σ⁺−σ⁻)/(σ⁺+σ⁻)` is
+dimensionless *because it is a ratio*.  And the cross sections lost their hand-copied constant:
+
+```cpp
+return sigma.makeSameUnitAs(PARTONS::PhysicalUnit::NB);   // was: * CONV_GEVm2_TO_NBARN
+```
+
+so the conversion is declared, not transcribed, and cannot drift from PARTONS'.
+
+**Verification.**  Three-path agreement to every digit (0.128611), tensor path keeps
+`requires_grad = true`, and the 22-observable differential test is unchanged at **17 of 22**.  The
+five that moved are exactly the cross sections, all at ~10⁻¹⁶ and all *improved*
+(`UUMinus` 4.58×10⁻¹⁶ → 3.05×10⁻¹⁶) — because `makeSameUnitAs` divides by 1/C where the old code
+multiplied by C, so our conversion is now bit-for-bit the one the scalar side performs.
+
+**One trap, hit once.**  `getTensor()` first returned `const torch::Tensor&`, but
+`PhysicalType::getValue()` returns `T` **by value** — the reference bound to a temporary and
+dangled.  With a refcounted handle that aborts with `pointer being freed was not allocated`
+rather than merely reading garbage.  Returns by value now, which costs nothing.
+
+51 files changed and **no `CMakeLists.txt` edit** — every new file is a header-only template.
+
+
 ---
 
 ## Current status / open items
@@ -1005,6 +1061,11 @@ changing any physics, so it is not done.
   base PARTONS classes.  The determining factor is the **observable leaf**, not the process
   module (a `*Torch` leaf routes into the tensor physics however you drive it).  See
   `CLAUDE.md` for the full caveat table.
+- ~~Torch chain carries no unit system~~ **resolved 2026-09-23** — the chain now carries
+  `PhysicalType<torch::Tensor>` and returns an `ObservableResultTorch<K>` bean, so the GeV⁻² → nb
+  conversion is a `makeSameUnitAs()` call rather than a hand-copied constant and a unit mismatch
+  throws.  The bean still omits `Result<K>`'s channel-type and result-info fields, deliberately:
+  they serve PARTONS' database and report serialization and would be write-only here.
 - **`x_pow` is a manual constant** — not fit or selected automatically, and no systematic
   comparison of values has been recorded.
 - **Replica hyperparameters untuned** — `hopeless_val_loss = 100`, `hopeless_check_epoch = 200`,

@@ -81,11 +81,12 @@ This is the active development area. It implements a differentiable pipeline:
 
 A **fully differentiable** DVCS observable chain that runs *inside* the PARTONS module framework (not bypassing it). The design goal is a tensor chain **structurally identical, link-for-link, to PARTONS' scalar chain**: every scalar link has a torch twin with the same role, so gradients (∂A_LU/∂NN-weights) flow end-to-end while the same classes remain drop-in for the scalar pipeline. This enables training directly on observable data.
 
-**Generic, channel-agnostic templates** (`Theory/Modules/…`, header-only — tensor twins of PARTONS' `Observable<K,R>` / `ProcessModule<K,R>` / `ObservableService<K,R>`; the `ResultType` parameter collapses to `torch::Tensor`, so only `KinematicType` is templated):
+**Generic, channel-agnostic templates** (`Theory/Modules/…`, header-only — tensor twins of PARTONS' `Observable<K,R>` / `ProcessModule<K,R>` / `ObservableService<K,R>`; the `ResultType` parameter collapses to `ObservableResultTorch<K>`, so only `KinematicType` is templated):
 
 - **`ObservableTorch<K>`** (`Modules/Obs/ObservableTorch.h`) — NVI idiom mirroring scalar `compute`/`computeObservable`: public template method `computeTensor()` delegates to the protected pure-virtual hook `computeTensorImpl()`.
 - **`ProcessModuleTorch<K>`** (`Modules/Processes/ProcessModuleTorch.h`) — channel-agnostic skeleton; no cross-section API (that's channel-specific, as in scalar).
-- **`ObservableServiceTorch<K>`** (`Modules/Services/ObservableServiceTorch.h`) — generic driver `computeSingleKinematicTorch(kin, ObservableTorch<K>*)` returning the live tensor (no detach). A **mixin**, not a base, since it's layered onto the existing PARTONS service.
+- **`ObservableServiceTorch<K>`** (`Modules/Services/ObservableServiceTorch.h`) — generic driver `computeSingleKinematicTorch(kin, ObservableTorch<K>*)` / `computeManyKinematicTorch(List<K>, …)`, both returning an `ObservableResultTorch<K>` whose tensor is live (no detach). A **mixin**, not a base, since it's layered onto the existing PARTONS service.
+- **`ObservableResultTorch<K>`** (`Theory/Beans/Obs/`, header-only; DVCS alias `DVCSObservableResultTorch` in `Beans/Obs/DVCS/`) — the result bean: `PhysicalType<torch::Tensor>` (value **and unit**) + the `List<K>` it was evaluated at + the module name. A **sibling** of PARTONS' `ObservableResult`, not an instantiation of it: that class's payload is a hardcoded `PhysicalType<double>` with no template parameter for the value type, and its base `Result<K>` holds a *singular* kinematic and needs `operator<` and a `const toString()` that `List<K>` does not provide. One bean per **batch**, where the scalar `computeManyKinematic` returns `List<ObservableResult>`, one per point. Deliberately omits `Result<K>`'s channel type and result-info fields — they exist for PARTONS' database/report serialization and nothing on the tensor path reads them. `getTensor()` returns **by value**: `PhysicalType::getValue()` does too, so a reference would dangle, and with a refcounted handle that corrupts the heap rather than merely reading garbage.
 
 **DVCS channel layer** (`Theory/Modules/…/DVCS/`):
 
@@ -125,10 +126,13 @@ A **fully differentiable** DVCS observable chain that runs *inside* the PARTONS 
 ```
 ObservableServiceTorch::computeManyKinematicTorch      ↔  ObservableService::computeManyKinematic
    computeSingleKinematicTorch                         ↔     computeSingleKinematic
+   → ObservableResultTorch<K>  (one bean, [N] tensor)  ↔     → List<ObservableResult> (N beans)
 ObservableTorch::computeTensorBatch (template method)  ↔  Observable::compute
    computeTensorImplBatch (hook)                       ↔     computeObservable
+   → PhysicalType<torch::Tensor>                       ↔     → PhysicalType<double>
 DVCSAluMinusTorch::aLUTensorBatch (pointwise)          ↔  DVCSAluMinus::computeObservable
 DVCSProcessModuleTorch::crossSectionTensorBatch (Σ)    ↔  DVCSProcessModule::compute(…,VCSSubProcessType)
+   → PhysicalType<torch::Tensor> (GEVm2)               ↔     → PhysicalType<double> (GEVm2)
    crossSectionBH/VCS/InterfTensorBatch                ↔     CrossSectionBH/VCS/Interf
    setupKinematicsTorchBatch                           ↔     setKinematics + CFF forward
 DVCSCFFModuleTorch::computeAllCFFsTensorBatch          ↔  DVCSConvolCoeffFunctionModule::computeCFF
@@ -136,7 +140,7 @@ DVCSCFFModuleTorch::computeAllCFFsTensorBatch          ↔  DVCSConvolCoeffFunct
 
 `computeTensor`/`computeTensorImpl` (single-kinematic) survive as thin N=1 wrappers over their `…Batch` siblings — they are an entry-point convenience, not a separate implementation.
 
-The only irreducible differences: the torch chain returns a grad-carrying `torch::Tensor` (scalar returns a detached `double` via the result bean), and evaluates the BMJ12 formulae + φ-nodes as `float64` tensors/batches (scalar uses native `double` + a scalar φ loop). With the same DEXP and `float64`, all three `observ_calc*` paths agree to every printed digit.
+The only irreducible differences: the torch chain's result bean carries a grad-carrying `torch::Tensor` (scalar's carries a detached `double`), and evaluates the BMJ12 formulae + φ-nodes as `float64` tensors/batches (scalar uses native `double` + a scalar φ loop). With the same DEXP and `float64`, all three `observ_calc*` paths agree to every printed digit.
 
 ### ⚠️ Coverage caveat — torch path is unpolarized-target only
 
@@ -440,7 +444,7 @@ Make the Torch chain **generic (channel-ready) and link-for-link symmetric with 
 
 **Min-max scaling carried into the CFF module.** `train_nn()` fits `m_X_min`/`m_X_max` on the training set; these are now passed into `DVCSCFFNNTorch::setModel(net, outputLayer, xMin={}, xMax={})` (folded into `setModel`, not a separate `setScaling`, so the model and its preprocessing travel together). `computeCFF`/`computeCFFTensor` apply `(x−xMin)/(xMax−xMin)` (guarded by `m_xMin.defined()`, so undefined = raw features). Fixes a real train/inference scaling mismatch.
 
-**Generic templates introduced** (`ObservableTorch<K>`, `ProcessModuleTorch<K>`, `ObservableServiceTorch<K>`), instantiated for DVCS via alias / channel subclass — tensor twins of PARTONS' `Observable<K,R>` / `ProcessModule<K,R>` / `ObservableService<K,R>`. `ResultType` collapses to `torch::Tensor`.
+**Generic templates introduced** (`ObservableTorch<K>`, `ProcessModuleTorch<K>`, `ObservableServiceTorch<K>`), instantiated for DVCS via alias / channel subclass — tensor twins of PARTONS' `Observable<K,R>` / `ProcessModule<K,R>` / `ObservableService<K,R>`. `ResultType` collapses to `torch::Tensor`. *(It collapses to `ObservableResultTorch<K>` as of 2026-09-23 — see those notes.)*
 
 **NVI symmetry on the observable.** `ObservableTorch::computeTensor()` is now a public template method delegating to the protected pure-virtual `computeTensorImpl()` — the exact analog of scalar `compute()`/`computeObservable()`. Leaves override `computeTensorImpl`.
 
@@ -1134,3 +1138,47 @@ This retro-explains several things previously written off as "the floor": the su
 
 - **`observ_calc_scalar_cff` reports only the max**, which is what hid the cross-section under-resolution. A per-point summary (worst *n*, or a flag on any point above a threshold) would stop that recurring across the remaining 37 observables.
 - **The LP/TP coefficient rows** remain the one blocker for all 36 polarized-target observables. Separate issue.
+
+
+---
+
+## Session notes (2026-09-23, later)
+
+### Units carried through the tensor chain — `PhysicalType<torch::Tensor>`
+
+The torch chain returned bare tensors while the scalar chain carries `PhysicalType<double>` internally (`DVCSProcessModule::compute` accumulates into `PhysicalType<double> value(0., PhysicalUnit::GEVm2)`). That was the **last place the two chains differed in shape**, and it started to matter when the cross sections landed: they are the first dimensionful observables, and nothing checked their GeV⁻² → nb step.
+
+**The premise was verified before anything was built on it.** `PhysicalType` is a plain template with no constraint on its value type and its members instantiate lazily, so `PhysicalType<torch::Tensor>` needs no patch to PARTONS — but that was an expectation, not a result, so a standalone probe checked it:
+
+```
+requires_grad after +            : 1
+requires_grad after makeSameUnit : 1
+GeV^-2 -> nb factor              : 389379   (expected 389379)
+grad reached w                   : 1   value 4.67255e+06
+unit mismatch caught             : yes
+```
+
+The gradient value is exact, not merely present: with σ = (2w)², sum = 1.5σ, `d(sum·C)/dw = 12·C = 4672551.6`. The chain rule carries *through* the unit conversion, as it must for a constant factor. A `torch::Tensor` is a refcounted handle, so `PhysicalType`'s by-value storage shares the graph instead of copying it.
+
+**What changed** — `ObservableResultTorch<K>` (+ `DVCSObservableResultTorch` alias) added; `ObservableTorch<K>`'s template methods return the bean and its two hooks return `PhysicalType<torch::Tensor>`; both service drivers return the bean; `DVCSProcessModuleTorch`'s three sub-process atoms are tagged `GEVm2` and the assemble accumulates with `PhysicalType::operator+`; all 22 leaves and 5 call sites. 51 files, and **no `CMakeLists.txt` change** — every new file is a header-only template.
+
+**Two payoffs beyond the check itself.** Asymmetries now get their unit **derived rather than asserted**: `PhysicalType::operator/` tags every quotient `NONE`, so `(σ⁺−σ⁻)/(σ⁺+σ⁻)` is dimensionless *because it is a ratio*. And the cross sections lost their hand-copied constant —
+
+```cpp
+return sigma.makeSameUnitAs(PARTONS::PhysicalUnit::NB);   // was: * CONV_GEVm2_TO_NBARN
+```
+
+— so the conversion is declared, not transcribed, and cannot drift from PARTONS'.
+
+**Verification.** Three-path agreement to every digit (0.128611), tensor path keeps `requires_grad = true`, and the 22-observable differential test is **unchanged at 17 of 22**. The five that moved are exactly the cross sections, all at ~1e-16, and all *improved* (e.g. `UUMinus` 4.58e-16 → 3.05e-16). The reason is worth recording: `makeSameUnitAs` computes `value × factor(GEVm2) / factor(NB)`, a **division by 1/C**, where the old code **multiplied by C**. Those differ in the last bit — and since the scalar side runs that identical call, our conversion is now bit-for-bit the one it performs.
+
+### A trap in this API, hit once
+
+`ObservableResultTorch::getTensor()` first returned `const torch::Tensor&`. But **`PhysicalType::getValue()` returns `T` by value**, so the reference bound to a temporary and dangled. With a refcounted handle that does not merely read garbage — it aborts with `pointer being freed was not allocated`, because the handle's destructor runs on a dead object. Returns by value now, which costs nothing (an `intrusive_ptr` bump sharing storage *and* `grad_fn`). Recorded on the method, since anyone adding an accessor here could repeat it.
+
+### What is still NOT mirrored, deliberately
+
+The bean carries no channel type and no result-info. Those exist so PARTONS can serialize to its database and reports; on the tensor path every one of those fields would be written and never read. And a faithful `Result<K>` twin would be inherently one-per-point — its `m_kinematic` is singular, set from a single `kinematic` argument in `DVCSObservable::compute` — which pulls against the batched shape for no benefit, since the caller already holds the kinematics it passed in.
+
+Note an earlier version of this argument claimed a per-point bean would reintroduce "per-point object churn the batching work removed". **That was wrong** and is retracted: the 2026-09-15 work removed the per-point *computation* loop, not object construction (`fit_once` still builds N kinematic beans, once per fit), and even N result beans at N=16 would be ~130 small objects against a ~30 ms epoch. The case against is that the fields are inert here, not that they would be slow.
+
