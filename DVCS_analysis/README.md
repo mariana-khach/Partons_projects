@@ -1040,6 +1040,36 @@ rather than merely reading garbage.  Returns by value now, which costs nothing.
 51 files changed and **no `CMakeLists.txt` edit** — every new file is a header-only template.
 
 
+### Comparison notebooks, one per dataset (2026-09-24)
+
+`My_Analysis/Codes/` holds three, structurally identical — learning curves → predicted-vs-measured
+→ residuals → pulls → CFF scans with the replica band → Gepard overlay:
+
+| Notebook | Partons fit | Gepard replicas |
+|---|---|---|
+| `CFF_plots_ALU_2007_xpow_replica.ipynb` | $A_{LU}^{\sin 1\phi}$, ImH | `gepard_imh_replica_*.json` |
+| `CFF_plots_AC_2012_xpow_replica.ipynb` | $A_C^{\cos 0\phi}$, ReH | `gepard_reh_replica_*.json` |
+| `CFF_plots_XLU_2018_xpow_replica.ipynb` | XLU, ImH | `gepard_imh_replica_*.json` |
+
+The two new ones derive their scan ranges **from the data file** instead of hardcoding CLAS
+numbers, and fix the scan slices at the dataset's mean kinematics — the same convention Gepard's
+own `CFF_plots_*_xpow.ipynb` uses, so both sides are compared on identical slices.  Figures carry
+`_AC` / `_XLU` suffixes so the three sets do not overwrite each other.
+
+**⚠️ The A_LU notebook's Gepard panels are suspect.**  `gepard_imh_replica_*.json` carries
+`dataset: {id: 163, observable: XLU, CLAS, 2018}` — those are the **XLU** replicas.  Correct for
+the XLU notebook; but the A_LU notebook loads the same files while its markdown claims *"the same
+CLAS 2007 ALU dataset"*.  Most likely the XLU fit regenerated them under the same name.  The
+`_BMK`, `_moredat` and `_BMK_moredat` variants have no `dataset` field, so one of those may be the
+original A_LU set.  **Unresolved.**
+
+**A plotting trap.**  `predicted vs measured` renders as an invisible hairline on the CLAS 2018
+set: `errorbar(..., xerr=error)` autoscales x to include the error bars, three points have `error`
+up to 1815 on values spanning [−1.1, 1.8], giving `xlim = ±1996` against `ylim = ±1`, and
+`set_aspect('equal', 'box')` then squashes the axes to 2000:1.  Fixed in the XLU notebook by
+setting limits from the *values*.  The other two are unaffected (errors comparable to values).
+
+
 ---
 
 ## Current status / open items
@@ -1066,6 +1096,17 @@ rather than merely reading garbage.  Returns by value now, which costs nothing.
   conversion is a `makeSameUnitAs()` call rather than a hand-copied constant and a unit mismatch
   throws.  The bean still omits `Result<K>`'s channel-type and result-info fields, deliberately:
   they serve PARTONS' database and report serialization and would be write-only here.
+- **BMJ12 differential tests are OFF in the runner** — `const bool runBMJ12DifferentialTests =
+  false` in `Run_CFF_NN_Fit.cpp`.  The calls are kept, not deleted.  **Turn them back on after any
+  change to `DVCSProcessBMJ12Torch`, to a leaf's formula, or when adding an observable**, and point
+  the fitter at a small data file while doing so.  They are the only thing linking the two
+  independent BMJ12 transcriptions, so they are a regression test, not a one-time validation.
+  They were disabled because the *native* side loops per data point — ~4 s on 16 points, but
+  28 × 3008 ≈ 84 000 scalar evaluations on the CLAS 2018 set.  A `--selftest` flag with its own
+  fixed small file would decouple the test from the fit's dataset; proposed and not taken.
+- **The 3 → 6 → 1 network underfits the 3008-point set** (χ²/n 1.68, train ≈ val, flat from epoch
+  ~1000).  Try adding `ImE`/`ImHt` to the output layer first — XLU's interference term involves
+  all three — then more hidden neurons, then a non-zero `x_pow`.
 - **`x_pow` is a manual constant** — not fit or selected automatically, and no systematic
   comparison of values has been recorded.
 - **Replica hyperparameters untuned** — `hopeless_val_loss = 100`, `hopeless_check_epoch = 200`,
@@ -1166,12 +1207,56 @@ Input files are pipe-separated (`|`).
 xB | t | Q2 | E | phi | <observable> | error
 ```
 
-`load_data_observable()` returns `(X[N,3] = (xB, t, Q²), E[N], phi[N], y_obs[N] = col 5,
-sigma[N] = last col)`.  Training and prediction operate on the **observable**
-(A_LU^{sin1φ}), and `error` **is** used — it is the σ in the reduced-χ²/n loss.  φ is loaded
-and passed into the kinematics; the sin1φ moment integrates it out, but it is kept so
-`CustomLoss` is reusable for φ-dependent observables.  Current file:
-`Data/Partons_input/BSA_CLAS_07_KK_format_ALU_error.csv` (16 points).
+`load_data_observable()` returns an `ObservableData` struct: `X[N,3] = (xB, t, Q²)`, `E[N]`,
+`phi[N]`, `y_obs[N]` (field 6), `sigma[N]` (field 7) and **`observableName`** — the header's
+6th field.  `error` **is** used: it is the σ in the reduced-χ²/n loss.
+
+### ⚠️ The header selects the observable (2026-09-24)
+
+The 6th field must be the **PARTONS scalar observable class name** — `DVCSAluMinusSin1Phi`,
+`DVCSAcCos0Phi`, `DVCSCrossSectionDifferenceLUMinus`, … — not a free-form label.  The tensor
+leaf wired for the fit is that name **+ `"Torch"`**, resolved through
+`ModuleObjectFactory::newDVCSObservable(const std::string&)`, so there is no mapping table.
+
+The scalar name rather than the torch one because the file then describes *physics* rather than
+our implementation, and because it yields **both** classIds — the native one for
+`observ_calc_scalar_cff()` and the tensor twin by suffix.
+
+Before this the header was read and **thrown away** while `CustomLoss` hardcoded
+`DVCSAluMinusSin1PhiTorch`, so pointing the fitter at a file of A_C data silently fitted A_LU to
+it and reported nothing worse than a poor χ².  `CustomLossImpl`'s `observableName` is therefore
+**required, not defaulted**.  An unresolvable name throws at startup naming the file and both
+spellings — so the 37 observables with no torch twin now fail loudly rather than silently running
+the unpolarized port.
+
+The header is **validated**: exactly 7 fields, the 7th named `error`.  That closes a latent bug by
+construction — σ is read with `rows[i].back()`, so on a 6-column file it would silently have been
+the observable itself.  Only `*_error.csv` files are fittable.
+
+φ is loaded and passed into the kinematics.  A **moment** leaf integrates it away; a **pointwise**
+leaf evaluates each row at its own φ, so for those the φ column is live data.
+
+### Datasets fitted
+
+Switching between them is two lines in `Run_CFF_NN_Fit.cpp` (path + output layer); the observable
+follows the header.
+
+| File | Observable | N | Output | Result |
+|---|---|---|---|---|
+| `BSA_CLAS_07_…_ALU_error.csv` | `DVCSAluMinusSin1Phi` | 16 | ImH | R² 0.79, χ²/n 0.28 |
+| `BCA_HERMES_12_…_AC_cos0phi_error.csv` | `DVCSAcCos0Phi` | 18 | **ReH** | R² 0.89, χ²/n 0.25 |
+| `BSD_CLAS_18_…_XLU_phi_error.csv` | `DVCSCrossSectionDifferenceLUMinus` | **3008** | ImH | R² 0.76, χ²/n 1.68 |
+
+**ReH for A_C** because its *cosine* moments carry the **real** parts of the CFFs; **ImH** for the
+two helicity-odd observables, whose *sine* harmonics carry the imaginary parts.
+
+The CLAS 2018 set is the first **per-φ** dataset (230 distinct φ over 1250 kinematic bins) and the
+first large one.  Two things it showed: the batched chain scales well — **188× the points for 3.8×
+the time per epoch** (61 ms vs ~16 ms), because a pointwise leaf runs at M = 1 where a GL-40 moment
+runs at M = 40 — and the 3 → 6 → 1 network **underfits** it (train ≈ val to three digits, flat from
+epoch ~1000) where the same net *over*fits a 16-point file.  Suspects in order: only ImH is fitted
+while XLU's interference term involves ImH, ImE and ImH̃; 6 hidden neurons; `x_pow = 0` across
+xB 0.124–0.500.
 
 The older **CFF-label format** (`xB | t | Q2 | … | ImH | ReH | … | error`, labels matched by
 column name from `output_layer`) is no longer read by `CFF_NN_Fitter` — its loader was removed

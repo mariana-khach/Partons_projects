@@ -67,7 +67,7 @@ This is the active development area. It implements a differentiable pipeline:
 3. `observ_calc()` — base-PARTONS scalar reference: `DVCSCFFNNTorch` + base `DVCSProcessBMJ12` + base `DVCSAluMinusSin1Phi` via `DVCSObservableService`.
 4. `observ_calc_torch()` — same observable through the PARTONS-tensor chain via `DVCSObservableServiceTorch::computeSingleKinematicTorch` → `computeTensor()`, inside the libtorch autograd graph.
 5. `observ_calc_torch_scalar()` — the `*Torch` subclasses driven through the standard `DVCSObservableService`; the inherited scalar virtuals wrap the tensor methods under `NoGradGuard`+`.item()` (verification path — same torch physics, gradient dropped).
-5b. `observ_calc_scalar_cff()` — differential test of the **BMJ12 transcription itself**, with the network out of the picture: fixed CFFs (`DVCSCFFConstant`) are pushed through PARTONS' native scalar process module and, via `DVCSCFFScalarTorch`, through `DVCSProcessBMJ12Torch`. The two sides then share nothing but four constant numbers, so any disagreement is in the arithmetic. Scans **every point of the dataset**, and drives the torch side through `computeManyKinematicTorch` — so it is also the only check that exercises the batched `[N,M]` path with N>1 (everything else runs at N=1, where a broadcasting mistake cannot show). Prints a per-point table plus max absolute/relative deviation. Needs no trained model. `spread_phi = true` replaces the data file's φ column with an even sweep of [0, 2π): every row of the current file carries the **same** φ, so a pointwise leaf scanned over the dataset is otherwise tested at exactly one angle, and a formula wrong elsewhere in φ passes (added 2026-09-22 when checking A_C). It is a no-op for a moment leaf, which ignores the stored φ. ⚠️ **It reports the MAX over the dataset, and that statistic can hide a real problem** — on the cross sections it sat at 2.4848e-04 from GL-40 to GL-640, pinned by one point where the *scalar* integrator is the outlier, while another point was still converging underneath it. Read the per-point column when choosing a quadrature order. See the 2026-09-21 and 2026-09-23 session notes.
+5b. `observ_calc_scalar_cff()` — differential test of the **BMJ12 transcription itself**, with the network out of the picture: fixed CFFs (`DVCSCFFConstant`) are pushed through PARTONS' native scalar process module and, via `DVCSCFFScalarTorch`, through `DVCSProcessBMJ12Torch`. The two sides then share nothing but four constant numbers, so any disagreement is in the arithmetic. Scans **every point of the dataset**, and drives the torch side through `computeManyKinematicTorch` — so it is also the only check that exercises the batched `[N,M]` path with N>1 (everything else runs at N=1, where a broadcasting mistake cannot show). Prints a per-point table plus max absolute/relative deviation. Needs no trained model. ⚠️ **The 28 calls in `Run_CFF_NN_Fit.cpp` are guarded off** behind `const bool runBMJ12DifferentialTests = false` (2026-09-24): the NATIVE side loops per data point, since PARTONS has no batched entry point that keeps per-point values, so the cost scales with the *fit's* data file — ~4 s on 16 points, but 28 × 3008 ≈ 84 000 scalar evaluations (most with adaptive DEXP) on the CLAS 2018 set. **Turn it back on after any change to `DVCSProcessBMJ12Torch`, to a leaf's formula, or when adding an observable**, and point the fitter at a small file while doing so. It is the ONLY thing linking the two independent BMJ12 transcriptions, so it is a regression test, not a one-time validation. `spread_phi = true` replaces the data file's φ column with an even sweep of [0, 2π): every row of the current file carries the **same** φ, so a pointwise leaf scanned over the dataset is otherwise tested at exactly one angle, and a formula wrong elsewhere in φ passes (added 2026-09-22 when checking A_C). It is a no-op for a moment leaf, which ignores the stored φ. ⚠️ **It reports the MAX over the dataset, and that statistic can hide a real problem** — on the cross sections it sat at 2.4848e-04 from GL-40 to GL-640, pinned by one point where the *scalar* integrator is the outlier, while another point was still converging underneath it. Read the per-point column when choosing a quadrature order. See the 2026-09-21 and 2026-09-23 session notes.
 6. `train_replicas(n_replicas, …)` — trains a Monte Carlo replica ensemble for a CFF uncertainty band: each replica independently fits Monte-Carlo-smeared pseudodata (`y_smeared = y_obs + N(0, sigma)`), with a fresh train/val split, fresh weight init, and fresh optimizer per replica, via the shared `fit_once()` helper (also used internally by `train_nn()` for the unsmeared central fit). A replica whose validation loss diverges (NaN/Inf) or stays above a "hopeless" reduced-χ²/n threshold at a periodic checkpoint epoch is discarded and fully redrawn (fresh smear + split + init, not just weight reinit), up to `max_tries_per_replica` **total tries** (default 30 — one initial fit plus up to 29 redraws). If every try is hopeless the ensemble is abandoned: the replicas accepted so far are exported (that compute is not lost), then a `std::runtime_error` is thrown naming the replica, the try count and how many were exported. A short ensemble returned silently would be read downstream as a complete one, so the run fails loudly instead. Populates `m_replicas` (`std::vector<TrainedModel>`, each carrying its own net + min-max scaling + best val loss).
 7. `export_replicas(out_dir, name_prefix)` — writes each trained replica as `<name_prefix><NN>.json` (same format as `cff_model.json`, via a `net`/scaling-parameterized overload of `export_model_json()`), for out-of-process (Python) mean ± σ CFF bands. **Deletes any pre-existing `<name_prefix>*.json` in `out_dir` first**, so the directory always describes the run that just finished — otherwise a shorter ensemble (10 replicas, then 5) or an aborted one leaves stale files that a `glob` in the plotting code reads as part of the current set. Nothing is deleted when there is nothing to write, so a run that fails before its first replica leaves the previous ensemble intact. See 2026-09-01 and 2026-09-18 session notes.
 
@@ -167,11 +167,35 @@ So: **do not wire a `*Torch` observable/process leaf for a polarized-target obse
 
 ## Data format
 
-Input CSVs are pipe-separated (`|`), **observable format**: `xB | t | Q2 | E | phi | <observable> | error`. `CFF_NN_Fitter::load_data_observable()` returns `(X[N,3]=(xB,t,Q2), E[N], phi[N], y_obs[N]=col 5, sigma[N]=last col)`. Training and prediction operate on the observable (A_LU^{sin1φ}). φ is loaded and passed into the kinematics — the sin1φ moment integrates it out, but it's kept so `CustomLoss` is reusable for φ-dependent observables.
+Input CSVs are pipe-separated (`|`), **observable format**: `xB | t | Q2 | E | phi | <observable> | error`. `CFF_NN_Fitter::load_data_observable()` returns an `ObservableData` struct: `X[N,3]=(xB,t,Q2)`, `E[N]`, `phi[N]`, `y_obs[N]` (field 6), `sigma[N]` (field 7), and **`observableName`** (the header's field 6).
+
+⚠️ **The header's 6th field SELECTS THE OBSERVABLE THE FIT COMPUTES**, as of 2026-09-24. It must be the **PARTONS scalar observable class name** — `DVCSAluMinusSin1Phi`, `DVCSAcCos0Phi`, `DVCSCrossSectionDifferenceLUMinus`, … — not a free-form label. The tensor leaf that gets wired is that name **+ `"Torch"`**, resolved through `ModuleObjectFactory::newDVCSObservable(const std::string&)`, so there is no mapping table to maintain.
+
+The scalar name rather than the torch one for two reasons: the file then describes *physics* rather than our implementation (it stays valid for a non-torch consumer), and it yields **both** classIds — the native one for `observ_calc_scalar_cff()` and the tensor twin by suffix.
+
+Before this, the header was read and **discarded** while `CustomLoss` hardcoded `DVCSAluMinusSin1PhiTorch`, so pointing the fitter at a file of A_C data silently fitted A_LU to it and reported nothing worse than a poor χ². `CustomLossImpl`'s `observableName` parameter is therefore **required, not defaulted** — a default would reinstate exactly that failure. An unresolvable name throws at startup naming the file, the header string and both spellings; in particular the 37 observables with no torch twin (the whole polarized-target sector) now fail loudly instead of silently running the unpolarized port.
+
+**The header is validated**: exactly 7 fields, the 7th named `error`. That requirement closes a latent bug by construction — σ is read with `rows[i].back()`, so on a 6-column file it would silently have been the observable itself. Only `*_error.csv` files are fittable.
+
+φ is loaded and passed into the kinematics. A moment leaf integrates it away; a **pointwise** leaf evaluates each row at its own φ, so for those the φ column is live data.
 
 The old CFF-label loader `CFF_NN_Fitter::load_data()` (which read `…|ImH|ReH|…` columns as NN targets) was **removed** (2026-06-18) — the workflow now fits the observable, not CFF labels. (`NN_Fitter::load_data()` in the separate `NN_Fit.{h,cpp}` is unrelated and still used by the `NN_CFF_fit` executable.)
 
-Data path and output paths are hardcoded absolute paths in `src/Run_CFF_NN_Fit.cpp` and `src/NNFit/CFF_NN_Fit.cpp` (pointing to `My_Analysis/Partons_output/`). Update these when moving environments. Current data file: `Data/Partons_input/BSA_CLAS_07_KK_format_ALU_error.csv` (16 points).
+Data path and output paths are hardcoded absolute paths in `src/Run_CFF_NN_Fit.cpp` and `src/NNFit/CFF_NN_Fit.cpp` (pointing to `My_Analysis/Partons_output/`). Update these when moving environments.
+
+**Datasets fitted so far** — switching between them is two lines in `Run_CFF_NN_Fit.cpp` (path + output layer); the observable follows the header:
+
+| File | Observable | N | Output | Result |
+|---|---|---|---|---|
+| `BSA_CLAS_07_..._ALU_error.csv` | `DVCSAluMinusSin1Phi` | 16 | ImH | R² 0.79, χ²/n 0.28 |
+| `BCA_HERMES_12_..._AC_cos0phi_error.csv` | `DVCSAcCos0Phi` | 18 | **ReH** | R² 0.89, χ²/n 0.25 |
+| `BSD_CLAS_18_..._XLU_phi_error.csv` | `DVCSCrossSectionDifferenceLUMinus` | **3008** | ImH | R² 0.76, χ²/n 1.68 |
+
+ReH for A_C because its **cosine** moments carry the **real** parts of the CFFs; ImH for the two helicity-odd observables, whose sine harmonics carry the imaginary parts.
+
+The CLAS 2018 set is the first **per-φ** dataset (230 distinct φ over 1250 kinematic bins) and the first large one. Two things it revealed: the batched chain scales well (188× the points for 3.8× the time per epoch — 61 ms vs ~16 ms, because a pointwise leaf runs at M=1 where a GL-40 moment runs at M=40), and the 3 → 6 → 1 network **underfits** it (train ≈ val to three digits, flat from epoch ~1000, χ²/n 1.68) where the same net overfits a 16-point file. Candidate causes, in order: only one CFF is fitted while XLU's interference term involves ImH, ImE and ImH̃; 6 hidden neurons; `x_pow = 0` over xB 0.124–0.500.
+
+⚠️ Two files carry `error` columns whose values exceed the observable itself (up to 1815 on values in [−1.1, 1.8], 3 points). They self-weight to ~1e-15 of a normal point, so they are effectively excluded rather than fitted — but they break naive autoscaling in plots. See the notebook note below.
 
 ## Output files (`My_Analysis/Partons_output/`)
 
@@ -1181,4 +1205,49 @@ return sigma.makeSameUnitAs(PARTONS::PhysicalUnit::NB);   // was: * CONV_GEVm2_T
 The bean carries no channel type and no result-info. Those exist so PARTONS can serialize to its database and reports; on the tensor path every one of those fields would be written and never read. And a faithful `Result<K>` twin would be inherently one-per-point — its `m_kinematic` is singular, set from a single `kinematic` argument in `DVCSObservable::compute` — which pulls against the batched shape for no benefit, since the caller already holds the kinematics it passed in.
 
 Note an earlier version of this argument claimed a per-point bean would reintroduce "per-point object churn the batching work removed". **That was wrong** and is retracted: the 2026-09-15 work removed the per-point *computation* loop, not object construction (`fit_once` still builds N kinematic beans, once per fit), and even N result beans at N=16 would be ~130 small objects against a ~30 ms epoch. The case against is that the fields are inert here, not that they would be slow.
+
+
+---
+
+## Session notes (2026-09-24)
+
+### The fitted observable now comes from the data file
+
+See the **Data format** section for the convention and the reasoning. The short version: the header's 6th field selects the observable, the tensor leaf is that name + `"Torch"`, and the header is validated (7 fields, the 7th named `error`).
+
+The motivation is worth restating because it was a *silent* failure, not a crash. `load_data_observable()` skipped the header and took column 6 positionally; `CustomLoss` hardcoded `DVCSAluMinusSin1PhiTorch`. Nothing connected the two. Pointing the fitter at a file of A_C data fitted A_LU to it and reported only a poor χ². Tolerable with one observable ported; not with 22.
+
+Verified on five cases: the ALU file reproduces its previous result to every digit; the A_C file wires `DVCSAcCos0PhiTorch`; a typo'd header, a valid-but-unported observable (`DVCSAulMinusSin1Phi`) and a file missing its `error` column each throw at startup with a message naming the file and both spellings.
+
+### Three datasets fitted
+
+See the table in **Data format**. Two findings from the CLAS 2018 per-φ set (3008 points):
+
+**The batching scales.** 188× the points for 3.8× the time per epoch (61 ms vs ~16 ms). Per element the two runs are within ~20%. A *pointwise* leaf runs at M = 1 where a GL-40 moment runs at M = 40, so φ-dependent data is the **cheap** case — had this been a moment over 3008 points it would have been `[3008, 40]`, ~190× the A_LU cost.
+
+**The network underfits it.** Train and validation track to three digits for the whole run and the curve is flat by epoch ~1000 at χ²/n ≈ 1.68 — the opposite of the 16-point fits, where the same net overfit badly. That is a capacity limit, not optimisation noise. Suspects in order: XLU's interference term involves ImH, ImE *and* ImH̃ while only ImH is fitted; 6 hidden neurons; `x_pow = 0` across xB 0.124–0.500.
+
+### Differential tests guarded off in the runner
+
+`const bool runBMJ12DifferentialTests = false`. The calls are kept in place, not deleted — see `observ_calc_scalar_cff`'s entry above for when to flip it back.
+
+Worth recording the structural point, since it will recur: the test lives **inside the production fit runner and scans the fit's own data file**, so it either runs on whatever you are fitting (tens of minutes at 3008 points) or not at all. A `--selftest` flag with its own fixed 16-point file would decouple it and run in ~4 s regardless. Proposed and **deliberately not taken** this session — noted here so the next person does not re-derive it.
+
+### Comparison notebooks
+
+`My_Analysis/Codes/` now holds three, one per dataset, all structurally identical (learning curves → predicted-vs-measured → residuals → pulls → CFF scans with the replica band → Gepard overlay):
+
+| Notebook | Partons fit | Gepard replicas |
+|---|---|---|
+| `CFF_plots_ALU_2007_xpow_replica.ipynb` | A_LU^{sin1φ}, ImH | `gepard_imh_replica_*.json` |
+| `CFF_plots_AC_2012_xpow_replica.ipynb` | A_C^{cos0φ}, ReH | `gepard_reh_replica_*.json` |
+| `CFF_plots_XLU_2018_xpow_replica.ipynb` | XLU, ImH | `gepard_imh_replica_*.json` |
+
+The two new ones derive their scan ranges **from the data file** rather than hardcoding CLAS numbers, and fix the scan slices at the dataset's mean kinematics — matching the convention in Gepard's own `CFF_plots_*_xpow.ipynb`, so both sides are compared on identical slices. Figures carry `_AC` / `_XLU` suffixes so the three sets do not overwrite each other.
+
+⚠️ **`gepard_imh_replica_*.json` carries `dataset: {id: 163, observable: XLU, CLAS, 2018}`** — the XLU replicas. So it is the right file for the XLU notebook, but the **A_LU notebook loads the same files while its markdown claims "the same CLAS 2007 ALU dataset"**. Most likely the XLU fit regenerated them under the same name. The `_BMK`, `_moredat` and `_BMK_moredat` variants have no `dataset` field (they predate it), so one of those may be the original A_LU set. **Unresolved** — the A_LU notebook's Gepard panels should not be trusted until it is.
+
+### A plotting trap worth knowing
+
+`predicted vs measured` renders as an invisible hairline on the CLAS 2018 set. `errorbar(..., xerr=error)` autoscales x to include the error bars; three points have `error` up to 1815 on values spanning [−1.1, 1.8], giving `xlim = ±1996` against `ylim = ±1`; `set_aspect('equal', 'box')` then squashes the axes to 2000:1. Fixed in the XLU notebook by setting the limits from the *values* (`lo`, `hi`, `pad` were already computed for the y = x line). The other two notebooks are unaffected — their errors are comparable to their values — and were left alone.
 
