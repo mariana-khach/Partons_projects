@@ -103,6 +103,15 @@ DVCSCFFScalarTorch::computeAllCFFsTensorBatch(const torch::Tensor& xi,
         throw ElemUtils::CustomException(getClassName(), __func__,
                 "No scalar CFF module set. Call setScalarModule() first.");
 
+    return evaluateScalarBatch(*m_pScalarCFF, xi, t, Q2, muF2, muR2);
+}
+
+DVCSCFFScalarTorch::AllCFFsTensorBatch
+DVCSCFFScalarTorch::evaluateScalarBatch(
+        PARTONS::DVCSConvolCoeffFunctionModule& scalarCFF,
+        const torch::Tensor& xi, const torch::Tensor& t, const torch::Tensor& Q2,
+        const torch::Tensor& muF2, const torch::Tensor& muR2) {
+
     const int64_t N = xi.size(0);
 
     // [4][N] real and imaginary parts, in kTypes order.
@@ -122,7 +131,7 @@ DVCSCFFScalarTorch::computeAllCFFsTensorBatch(const torch::Tensor& xi,
                 t[i].item<double>(), Q2[i].item<double>(),
                 muF2[i].item<double>(), muR2[i].item<double>());
 
-        PARTONS::DVCSConvolCoeffFunctionResult result = m_pScalarCFF->compute(
+        PARTONS::DVCSConvolCoeffFunctionResult result = scalarCFF.compute(
                 ccfKin, gpdTypes);
 
         // Read through the map rather than getResult(): a model that does not

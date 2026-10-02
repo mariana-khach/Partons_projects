@@ -22,14 +22,19 @@
  * @brief Differentiable (libtorch) twin of PARTONS::DVCSProcessBMJ12.
  *
  * Subclasses DVCSProcessBMJ12 so it is a drop-in process module: driven through
- * the scalar pipeline it behaves exactly like the base class (the inherited
- * scalar CrossSection* virtuals + the attached DVCSCFFNNTorch scalar wrapper).
+ * the scalar pipeline it behaves exactly like the base class. It overrides none
+ * of the scalar virtuals, so the inherited CrossSection* methods run native
+ * BMJ12 (full coverage, polarized targets included) with whatever CFF module is
+ * attached, calling its scalar computeCFF() as PARTONS always does.
  *
  * For the tensor path it adds crossSectionTensorBatch(): the BMJ12
  * unpolarized-target cross section sigma(lambda, phi), batched over N
- * kinematic points x M phi nodes, with the CFFs taken as complex tensors from
- * DVCSCFFNNTorch so that the autograd graph runs from the NN parameters to
- * the cross section.
+ * kinematic points x M phi nodes, with the CFFs taken as [N] complex tensors.
+ * Any PARTONS CFF module may be attached: one implementing DVCSCFFModuleTorch
+ * (DVCSCFFNNTorch, DVCSCFFScalarTorch) is asked for tensors directly -- with
+ * the network, the autograd graph then runs from the NN parameters to the
+ * cross section -- and any other is evaluated per point through its scalar
+ * compute() and packed into no-grad tensors.
  *
  * The pure-kinematic BMJ12 machinery (Fourier/angular coefficients, K, epsilon,
  * form factors, phase space, ...) is transcribed verbatim from
@@ -74,8 +79,9 @@ private:
     /**
      * Batched (N-point) sibling of setupKinematicsTorch: the BMJ12 derived
      * quantities and angular coefficients as [N]-tensor arithmetic, plus one
-     * batched NN forward for the CFFs. Called once by the base
-     * crossSectionTensorBatch() template method.
+     * batched CFF evaluation (a single NN forward for the network; N scalar
+     * calls for a plain PARTONS CFF module). Called once per batch by
+     * prepareTensorBatch().
      */
     void setupKinematicsTorchBatch(const torch::Tensor& xB, const torch::Tensor& t,
             const torch::Tensor& Q2, const torch::Tensor& E) override;
@@ -103,7 +109,7 @@ private:
     double m_M[2];
 
     // ----- batched cached state ----------------------------------------------
-    // CFFs from the NN, batched ([N] complex double, grad-tracked)
+    // CFFs, batched ([N] complex double; grad-tracked when they come from the NN)
     torch::Tensor m_CFFstdBatch[4];
     torch::Tensor m_CFFBatch[4][3];
 

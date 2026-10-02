@@ -40,6 +40,12 @@
  * torch chain mirrors the scalar chain, so a second way to attach a CFF module
  * would be a deviation, not a convenience.
  *
+ * Optional since 2026-10-02: DVCSProcessBMJ12Torch now accepts a plain scalar
+ * CFF module directly, falling back to evaluateScalarBatch() (below) when the
+ * cross-cast to DVCSCFFModuleTorch fails -- so any PARTONS CFF model plugs into
+ * the torch process exactly as into the scalar one. Wrapping it here gives the
+ * same numbers; the adapter remains for explicit wiring.
+ *
  * The wrapped model is set with setScalarModule() after construction, because
  * PARTONS modules are created by the factory from a registered prototype and
  * cannot take constructor arguments. Non-owning: the caller creates the
@@ -86,6 +92,21 @@ public:
     AllCFFsTensorBatch computeAllCFFsTensorBatch(const torch::Tensor& xi,
             const torch::Tensor& t, const torch::Tensor& Q2,
             const torch::Tensor& muF2, const torch::Tensor& muR2) override;
+
+    /**
+     * The per-point evaluation behind computeAllCFFsTensorBatch(), for ANY
+     * scalar CFF module. Static so DVCSProcessBMJ12Torch can apply it to a
+     * plain scalar module wired directly with setConvolCoeffFunctionModule()
+     * -- one implementation of the scalar -> tensor conversion, not two.
+     * @param scalarCFF the scalar model to evaluate (all four CFFs per call).
+     * @param xi,t,Q2,muF2,muR2 [N] CCF kinematics.
+     * @return four [N] complex float64 tensors, requires_grad = false.
+     */
+    static AllCFFsTensorBatch evaluateScalarBatch(
+            PARTONS::DVCSConvolCoeffFunctionModule& scalarCFF,
+            const torch::Tensor& xi, const torch::Tensor& t,
+            const torch::Tensor& Q2, const torch::Tensor& muF2,
+            const torch::Tensor& muR2);
 
 protected:
 
