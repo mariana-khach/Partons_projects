@@ -2119,6 +2119,23 @@ We want to preserve modularity
 Tell me which of these you want and I'll implement them, run the cross-path checks, and commit on 16-add-dvcs-observables.
 
 
+add the fallback to the process module to preserve modularity Done
 
 
-add the fallback to the process module to preserve modularity
+can scalar process and observable modules be used in torch chain with scalar  service?
+
+Yes. Through the scalar service, only the network is torch: DVCSCFFNNTorch under a scalar process and observable. That's what observ_calc() does, and it matches the tensor chain to every printed digit. It just gives no gradient, because the scalar service returns double values and nothing on that path builds a graph.
+
+Driven by the scalar DVCSObservableService:
+
+┌──────────────┬───────────────────────┬──────────────────────────────┬─────────────────────────────────┬───────────────────────────────┐
+│  Observable  │        Process                                 │             CFF                                         │             Works?              │            Physics            │
+├──────────────┼───────────────────────┼──────────────────────────────┼─────────────────────────────────┼───────────────────────────────┤
+│ base PARTONS      │ base PARTONS (any)                      │ DVCSCFFNNTorch                     │ ✅ (observ_calc())              │ native, full coverage         │
+├──────────────┼───────────────────────┼──────────────────────────────┼─────────────────────────────────┼───────────────────────────────┤
+│ base PARTONS │ DVCSProcessBMJ12Torch         │ any                                                      │ ✅                              │ native, full coverage         │
+├──────────────┼───────────────────────┼──────────────────────────────┼─────────────────────────────────┼───────────────────────────────┤
+│ *Torch       │ DVCSProcessBMJ12Torch                │ DVCSCFFNNTorch or any scalar         │ ✅ (observ_calc_torch_scalar()) │ tensor port, unpolarized only │
+├──────────────┼───────────────────────┼──────────────────────────────┼─────────────────────────────────┼───────────────────────────────┤
+│ *Torch       │ base PARTONS          │ any                          │ ❌ throws                       │ — (what #1 fixes)             │
+└──────────────┴───────────────────────┴──────────────────────────────┴─────────────────────────────────┴───────────────────────────────┘
