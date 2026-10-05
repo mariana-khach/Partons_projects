@@ -35,26 +35,15 @@ DVCSAluDVCSTorch* DVCSAluDVCSTorch::clone() const {
     return new DVCSAluDVCSTorch(*this);
 }
 
-DVCSProcessModuleTorch* DVCSAluDVCSTorch::torchProcessModule() {
-    DVCSProcessModuleTorch* pProc =
-            dynamic_cast<DVCSProcessModuleTorch*>(m_pProcessModule);
-    if (!pProc) {
-        throw ElemUtils::CustomException(getClassName(), __func__,
-                "Tensor path requires a DVCSProcessModuleTorch process module.");
-    }
-    return pProc;
-}
-
-PARTONS::PhysicalType<torch::Tensor> DVCSAluDVCSTorch::aLUTensorBatch(const torch::Tensor& xB,
+PARTONS::PhysicalType<torch::Tensor> DVCSAluDVCSTorch::aLUTensorBatch(DVCSProcessModuleTorch& proc,
+        const torch::Tensor& xB,
         const torch::Tensor& t, const torch::Tensor& Q2,
         const torch::Tensor& E, const torch::Tensor& phi) {
 
-    DVCSProcessModuleTorch* pProc = torchProcessModule();
-
     // Prepare once (kinematics + one batched NN forward), then assemble only
     // the cross sections this variant's formula needs.
-    pProc->prepareTensorBatch(xB, t, Q2, E);
-    return asymmetryTensorBatch(*pProc, phi);
+    proc.prepareTensorBatch(xB, t, Q2, E);
+    return asymmetryTensorBatch(proc, phi);
 }
 
 PARTONS::PhysicalType<torch::Tensor> DVCSAluDVCSTorch::asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
@@ -97,7 +86,9 @@ PARTONS::PhysicalType<torch::Tensor> DVCSAluDVCSTorch::computeTensorImplBatch(
     torch::Tensor phi = torch::tensor(phiVec, f64).unsqueeze(1);
 
     PARTONS::PhysicalType<torch::Tensor> r =
-            aLUTensorBatch(xB, t, Q2, E, phi);
+            aLUTensorBatch(
+            DVCSProcessModuleTorch::from(m_pProcessModule, getClassName()),
+            xB, t, Q2, E, phi);
     return PARTONS::PhysicalType<torch::Tensor>(r.getValue().squeeze(1),
             r.getUnit()); // [N,1] -> [N]
 }
@@ -113,6 +104,9 @@ PARTONS::PhysicalType<torch::Tensor> DVCSAluDVCSTorch::computeTensorImpl(
 PARTONS::PhysicalType<double> DVCSAluDVCSTorch::computeObservable(
         const PARTONS::DVCSObservableKinematic& kinematic,
         const PARTONS::List<PARTONS::GPDType>& gpdType) {
+    if (!DVCSProcessModuleTorch::tryFrom(m_pProcessModule))
+        return PARTONS::DVCSAluDVCS::computeObservable(kinematic, gpdType);
+
     torch::NoGradGuard no_grad;
     DVCSObservableResultTorch r =
             computeTensor(kinematic);

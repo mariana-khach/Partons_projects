@@ -2,6 +2,7 @@
 // Created by Mariana Khachatryan on 9/22/26.
 //
 
+#include "NNFit/Theory/Beans/Obs/DVCS/DVCSObservableResultTorch.h"
 #include "NNFit/Theory/Modules/Obs/DVCS/DVCSAcCos0PhiTorch.h"
 
 #include <partons/BaseObjectRegistry.h>
@@ -10,19 +11,23 @@
 
 #include <vector>
 
+#include "NNFit/Theory/Modules/Processes/DVCS/DVCSProcessModuleTorch.h"
+
 const unsigned int DVCSAcCos0PhiTorch::classId =
         PARTONS::BaseObjectRegistry::getInstance()->registerBaseObject(
                 new DVCSAcCos0PhiTorch("DVCSAcCos0PhiTorch"));
 
 DVCSAcCos0PhiTorch::DVCSAcCos0PhiTorch(const std::string& className)
-        : DVCSAcTorch(className), MathIntegratorModuleTorch() {
+        : PARTONS::DVCSAcCos0Phi(className), DVCSObservableTorch(),
+          MathIntegratorModuleTorch() {
     // Same fixed-order rule as the A_LU moment leaves; see
     // DVCSAluMinusSin1PhiTorch for why the order is 40.
     MathIntegratorModuleTorch::setIntegrator(NumA::IntegratorType1D::GL, 40);
 }
 
 DVCSAcCos0PhiTorch::DVCSAcCos0PhiTorch(const DVCSAcCos0PhiTorch& other)
-        : DVCSAcTorch(other), MathIntegratorModuleTorch(other) {
+        : PARTONS::DVCSAcCos0Phi(other), DVCSObservableTorch(other),
+          MathIntegratorModuleTorch(other) {
 }
 
 DVCSAcCos0PhiTorch::~DVCSAcCos0PhiTorch() {
@@ -52,8 +57,12 @@ PARTONS::PhysicalType<torch::Tensor> DVCSAcCos0PhiTorch::computeTensorImplBatch(
 
     // n = 0 is the plain average: no weight, and the 1/(2 pi) normalization
     // that distinguishes the zeroth Fourier coefficient from the rest.
-    auto integrand = [this, &xB, &t, &Q2, &E](const torch::Tensor& phi) -> torch::Tensor {
-        return aCTensorBatch(xB, t, Q2, E, phi).getValue();
+    // The pointwise layer is a static of the torch pointwise class, which this
+    // leaf no longer derives from (it derives from PARTONS::DVCSAcCos0Phi).
+    DVCSProcessModuleTorch& proc =
+            DVCSProcessModuleTorch::from(m_pProcessModule, getClassName());
+    auto integrand = [&proc, &xB, &t, &Q2, &E](const torch::Tensor& phi) -> torch::Tensor {
+        return DVCSAcTorch::aCTensorBatch(proc, xB, t, Q2, E, phi).getValue();
     };
 
     return PARTONS::PhysicalType<torch::Tensor>(
@@ -67,4 +76,16 @@ PARTONS::PhysicalType<torch::Tensor> DVCSAcCos0PhiTorch::computeTensorImpl(
     list.add(kinematic);
     PARTONS::PhysicalType<torch::Tensor> r = computeTensorImplBatch(list);
     return PARTONS::PhysicalType<torch::Tensor>(r.getValue()[0], r.getUnit());
+}
+
+PARTONS::PhysicalType<double> DVCSAcCos0PhiTorch::computeObservable(
+        const PARTONS::DVCSObservableKinematic& kinematic,
+        const PARTONS::List<PARTONS::GPDType>& gpdType) {
+    if (!DVCSProcessModuleTorch::tryFrom(m_pProcessModule))
+        return PARTONS::DVCSAcCos0Phi::computeObservable(kinematic, gpdType);
+
+    torch::NoGradGuard no_grad;
+    DVCSObservableResultTorch r = computeTensor(kinematic);
+    return PARTONS::PhysicalType<double>(r.getTensor().item<double>(),
+            r.getUnit());
 }

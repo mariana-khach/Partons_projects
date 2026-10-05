@@ -7,6 +7,8 @@
 
 #include <partons/beans/List.h>
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
+#include <partons/beans/gpd/GPDType.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAcCos3Phi.h>
 #include <partons/utils/type/PhysicalType.h>
 #include <partons/utils/type/PhysicalUnit.h>
 #include <torch/torch.h>
@@ -24,7 +26,8 @@
  * Mirrors the scalar class exactly -- same weight, same normalization, same
  * reuse of the parent's pointwise asymmetry as the integrand.
  */
-class DVCSAcCos3PhiTorch: public DVCSAcTorch, public MathIntegratorModuleTorch {
+class DVCSAcCos3PhiTorch: public PARTONS::DVCSAcCos3Phi,
+        public DVCSObservableTorch, public MathIntegratorModuleTorch {
 
 public:
 
@@ -45,6 +48,17 @@ protected:
     PARTONS::PhysicalType<torch::Tensor> computeTensorImplBatch(
             const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics)
             override;
+
+    /**
+     * Scalar entry point. On a torch process: computeTensor() under
+     * NoGradGuard, detached. On any other process: the native
+     * PARTONS::DVCSAcCos3Phi this class derives from -- its own phi
+     * integral over PARTONS::DVCSAc, so the leaf composes with any
+     * process module, as its scalar twin does.
+     */
+    virtual PARTONS::PhysicalType<double> computeObservable(
+            const PARTONS::DVCSObservableKinematic& kinematic,
+            const PARTONS::List<PARTONS::GPDType>& gpdType) override;
 };
 
 #endif /* DVCS_AC_COS3PHI_TORCH_H */

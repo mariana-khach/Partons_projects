@@ -7,6 +7,8 @@
 
 #include <partons/beans/List.h>
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
+#include <partons/beans/gpd/GPDType.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAluMinusSin2Phi.h>
 #include <partons/utils/type/PhysicalType.h>
 #include <partons/utils/type/PhysicalUnit.h>
 #include <torch/torch.h>
@@ -27,11 +29,14 @@
  * mirroring the scalar class exactly -- same weight, same 1/pi normalization,
  * same reuse of the parent's pointwise asymmetry as the integrand.
  *
- * Derives from DVCSAluMinusTorch (the pointwise layer) plus MathIntegratorModuleTorch
- * (a pure mixin, so no diamond), just as PARTONS::DVCSAluMinusSin2Phi derives from its own
- * pointwise class plus MathIntegratorModule.
+ * Derives from PARTONS::DVCSAluMinusSin2Phi itself -- and through it from its pointwise
+ * PARTONS class, exactly like the scalar class -- plus the DVCSObservableTorch
+ * and MathIntegratorModuleTorch mixins. The pointwise tensor layer is reused by
+ * calling DVCSAluMinusTorch's static aLUTensorBatch(), not by inheriting
+ * DVCSAluMinusTorch, which would duplicate the PARTONS pointwise base.
  */
-class DVCSAluMinusSin2PhiTorch: public DVCSAluMinusTorch, public MathIntegratorModuleTorch {
+class DVCSAluMinusSin2PhiTorch: public PARTONS::DVCSAluMinusSin2Phi,
+        public DVCSObservableTorch, public MathIntegratorModuleTorch {
 
 public:
 
@@ -59,6 +64,17 @@ protected:
     PARTONS::PhysicalType<torch::Tensor> computeTensorImplBatch(
             const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics)
             override;
+
+    /**
+     * Scalar entry point. On a torch process: computeTensor() under
+     * NoGradGuard, detached. On any other process: the native
+     * PARTONS::DVCSAluMinusSin2Phi this class derives from -- its own phi
+     * integral over PARTONS::DVCSAluMinus, so the leaf composes with any
+     * process module, as its scalar twin does.
+     */
+    virtual PARTONS::PhysicalType<double> computeObservable(
+            const PARTONS::DVCSObservableKinematic& kinematic,
+            const PARTONS::List<PARTONS::GPDType>& gpdType) override;
 };
 
 #endif /* DVCS_ALU_MINUS_SIN2PHI_TORCH_H */

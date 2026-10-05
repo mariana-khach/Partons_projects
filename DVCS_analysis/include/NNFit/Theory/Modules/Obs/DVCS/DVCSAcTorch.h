@@ -59,24 +59,27 @@ public:
      * [N,1] at each point's own phi. Named aCTensorBatch to match the family
      * it belongs to; the A_LU classes call theirs aLUTensorBatch.
      */
-    PARTONS::PhysicalType<torch::Tensor> aCTensorBatch(const torch::Tensor& xB, const torch::Tensor& t,
+    static PARTONS::PhysicalType<torch::Tensor> aCTensorBatch(DVCSProcessModuleTorch& proc,
+            const torch::Tensor& xB, const torch::Tensor& t,
             const torch::Tensor& Q2, const torch::Tensor& E,
             const torch::Tensor& phi);
 
-    /** Scalar wrapper over computeTensor() (detached) for the scalar pipeline. */
+    /**
+     * Scalar entry point. On a torch process: computeTensor() under
+     * NoGradGuard, detached. On any other process: the native PARTONS::DVCSAc
+     * this class derives from, so the leaf composes with any process module.
+     */
     virtual PARTONS::PhysicalType<double> computeObservable(
             const PARTONS::DVCSObservableKinematic& kinematic,
             const PARTONS::List<PARTONS::GPDType>& gpdType) override;
 
-    /** Cross-cast the attached process module to its tensor interface. */
-    DVCSProcessModuleTorch* torchProcessModule();
 
 protected:
 
     DVCSAcTorch(const DVCSAcTorch& other);
 
     /** The asymmetry formula; see the class brief. */
-    virtual PARTONS::PhysicalType<torch::Tensor> asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
+    static PARTONS::PhysicalType<torch::Tensor> asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
             const torch::Tensor& phi);
 };
 

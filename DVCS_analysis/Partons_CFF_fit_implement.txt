@@ -2139,3 +2139,36 @@ Driven by the scalar DVCSObservableService:
 ├──────────────┼───────────────────────┼──────────────────────────────┼─────────────────────────────────┼───────────────────────────────┤
 │ *Torch       │ base PARTONS          │ any                          │ ❌ throws                       │ — (what #1 fixes)             │
 └──────────────┴───────────────────────┴──────────────────────────────┴─────────────────────────────────┴───────────────────────────────┘
+
+
+by moment derives from moment, as DVCSAluMinusSin1Phi : DVCSAluMinus , do you mean moment derives from pointwise phi dependent observable?
+
+Yes. "Moment derives from moment" was a slip, and it mixed up two different relations.
+
+In PARTONS, a moment derives from its pointwise φ-dependent observable:
+
+PARTONS::DVCSAluMinus            (pointwise, A_LU(φ))
+        ↑
+PARTONS::DVCSAluMinusSin1Phi     (moment: ∫ A_LU(φ) sin φ dφ / π)
+
+What I meant is that after re-parenting, the torch moment derives from the PARTONS moment, and through it from the PARTONS pointwise class. Its PARTONS ancestry becomes the same chain as the scalar class's.
+
+Today:
+PARTONS::DVCSAluMinus
+        ↑
+DVCSAluMinusTorch            (torch pointwise)
+        ↑
+DVCSAluMinusSin1PhiTorch     (torch moment): never passes through PARTONS::DVCSAluMinusSin1Phi
+
+After re-parenting:
+PARTONS::DVCSAluMinus
+        ↑
+PARTONS::DVCSAluMinusSin1Phi
+        ↑
+DVCSAluMinusSin1PhiTorch     (+ DVCSObservableTorch, MathIntegratorModuleTorch mixins)
+
+DVCSAluMinusTorch            (torch pointwise): a sibling, no longer a base of the moment
+
+So the torch moment keeps a pointwise ancestor, PARTONS::DVCSAluMinus, just as before. What it gives up is inheriting from the torch pointwise class, DVCSAluMinusTorch. That's why the pointwise tensor formula has to become a static function the moment can call instead of a method it inherits.
+
+That's also the precise sense in which re-parenting "mirrors PARTONS": every torch class sits directly under its own PARTONS class, and the torch-to-torch reuse goes through calls instead of inheritance.

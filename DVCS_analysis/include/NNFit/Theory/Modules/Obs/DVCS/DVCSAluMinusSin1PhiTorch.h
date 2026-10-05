@@ -7,6 +7,8 @@
 
 #include <partons/beans/List.h>
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
+#include <partons/beans/gpd/GPDType.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAluMinusSin1Phi.h>
 #include <partons/utils/type/PhysicalType.h>
 #include <partons/utils/type/PhysicalUnit.h>
 #include <torch/torch.h>
@@ -24,17 +26,21 @@
  * Computes the beam-spin asymmetry Fourier moment
  *   A_LU^{sin1phi} = (1/pi) * integral_0^{2pi} A_LU(phi) * sin(phi) dphi,
  * entirely in tensors so the gradient flows from the asymmetry back to the NN
- * CFF parameters. The phi integral uses MathIntegratorModuleTorch with DEXP —
- * the same integrator the scalar DVCSAluMinusSin1Phi uses.
+ * CFF parameters. The phi integral uses MathIntegratorModuleTorch with a fixed
+ * GL-40 rule (see the constructor); the scalar class uses adaptive DEXP.
  *
- * Mirrors the scalar class hierarchy: derives from DVCSAluMinusTorch (the
- * pointwise asymmetry layer) and reuses its aLUTensorBatch(), exactly as the
- * scalar DVCSAluMinusSin1Phi derives from DVCSAluMinus and reuses computeObservable().
- * The pointwise scalar wrapper (computeObservable) is inherited unchanged — it
- * calls computeTensor() virtually, which resolves to the override below.
+ * Mirrors the scalar class hierarchy: derives from PARTONS::DVCSAluMinusSin1Phi
+ * itself -- and through it from PARTONS::DVCSAluMinus, exactly like the scalar
+ * class -- plus the two torch mixins. The pointwise tensor layer is reused by
+ * CALLING DVCSAluMinusTorch::aLUTensorBatch() (a static), not by inheriting
+ * DVCSAluMinusTorch: that would give this class two DVCSAluMinus subobjects.
+ *
+ * computeObservable() runs the tensor chain on a torch process module and
+ * PARTONS' own DVCSAluMinusSin1Phi (its DEXP integral over the native
+ * pointwise A_LU) on any other, so the leaf composes with any process module.
  */
-class DVCSAluMinusSin1PhiTorch: public DVCSAluMinusTorch,
-        public MathIntegratorModuleTorch {
+class DVCSAluMinusSin1PhiTorch: public PARTONS::DVCSAluMinusSin1Phi,
+        public DVCSObservableTorch, public MathIntegratorModuleTorch {
 
 public:
 
@@ -80,6 +86,17 @@ protected:
     PARTONS::PhysicalType<torch::Tensor> computeTensorImplBatch(
             const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics)
             override;
+
+    /**
+     * Scalar entry point. On a torch process: computeTensor() under
+     * NoGradGuard, detached. On any other process: the native
+     * PARTONS::DVCSAluMinusSin1Phi this class derives from -- its own phi
+     * integral over PARTONS::DVCSAluMinus, so the leaf composes with any
+     * process module, as its scalar twin does.
+     */
+    virtual PARTONS::PhysicalType<double> computeObservable(
+            const PARTONS::DVCSObservableKinematic& kinematic,
+            const PARTONS::List<PARTONS::GPDType>& gpdType) override;
 };
 
 #endif /* DVCS_ALU_MINUS_SIN1PHI_TORCH_H */

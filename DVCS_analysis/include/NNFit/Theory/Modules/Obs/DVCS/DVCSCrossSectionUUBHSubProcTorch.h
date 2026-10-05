@@ -59,17 +59,20 @@ public:
      * aLUTensorBatch()/aCTensorBatch(). The phi-integrated subclass uses it as
      * its integrand, exactly as the Fourier-moment leaves use theirs.
      */
-    PARTONS::PhysicalType<torch::Tensor> crossSectionNbTensorBatch(const torch::Tensor& xB,
+    static PARTONS::PhysicalType<torch::Tensor> crossSectionNbTensorBatch(DVCSProcessModuleTorch& proc,
+            const torch::Tensor& xB,
             const torch::Tensor& t, const torch::Tensor& Q2,
             const torch::Tensor& E, const torch::Tensor& phi);
 
-    /** Scalar wrapper over computeTensor() (detached), tagged nb. */
+    /**
+     * Scalar entry point. On a torch process: computeTensor() under
+     * NoGradGuard, detached. On any other process: the native PARTONS::DVCSCrossSectionUUBHSubProc
+     * this class derives from, so the leaf composes with any process module.
+     */
     virtual PARTONS::PhysicalType<double> computeObservable(
             const PARTONS::DVCSObservableKinematic& kinematic,
             const PARTONS::List<PARTONS::GPDType>& gpdType) override;
 
-    /** Cross-cast the attached process module to its tensor interface. */
-    DVCSProcessModuleTorch* torchProcessModule();
 
 protected:
 

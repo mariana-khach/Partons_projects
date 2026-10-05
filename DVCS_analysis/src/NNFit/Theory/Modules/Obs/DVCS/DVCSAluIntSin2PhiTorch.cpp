@@ -2,6 +2,7 @@
 // Created by Mariana Khachatryan on 9/22/26.
 //
 
+#include "NNFit/Theory/Beans/Obs/DVCS/DVCSObservableResultTorch.h"
 #include "NNFit/Theory/Modules/Obs/DVCS/DVCSAluIntSin2PhiTorch.h"
 
 #include <partons/BaseObjectRegistry.h>
@@ -10,19 +11,23 @@
 
 #include <vector>
 
+#include "NNFit/Theory/Modules/Processes/DVCS/DVCSProcessModuleTorch.h"
+
 const unsigned int DVCSAluIntSin2PhiTorch::classId =
         PARTONS::BaseObjectRegistry::getInstance()->registerBaseObject(
                 new DVCSAluIntSin2PhiTorch("DVCSAluIntSin2PhiTorch"));
 
 DVCSAluIntSin2PhiTorch::DVCSAluIntSin2PhiTorch(const std::string& className)
-        : DVCSAluIntTorch(className), MathIntegratorModuleTorch() {
+        : PARTONS::DVCSAluIntSin2Phi(className), DVCSObservableTorch(),
+          MathIntegratorModuleTorch() {
     // Same fixed-order Gauss-Legendre rule as the other moment leaves; see
     // DVCSAluMinusSin1PhiTorch for why the order is 40.
     MathIntegratorModuleTorch::setIntegrator(NumA::IntegratorType1D::GL, 40);
 }
 
 DVCSAluIntSin2PhiTorch::DVCSAluIntSin2PhiTorch(const DVCSAluIntSin2PhiTorch& other)
-        : DVCSAluIntTorch(other), MathIntegratorModuleTorch(other) {
+        : PARTONS::DVCSAluIntSin2Phi(other), DVCSObservableTorch(other),
+          MathIntegratorModuleTorch(other) {
 }
 
 DVCSAluIntSin2PhiTorch::~DVCSAluIntSin2PhiTorch() {
@@ -51,8 +56,12 @@ PARTONS::PhysicalType<torch::Tensor> DVCSAluIntSin2PhiTorch::computeTensorImplBa
     torch::Tensor E  = torch::tensor(EVec, f64);
 
     // A_LU(phi) * sin(2phi), batched over N points x the shared GL nodes.
-    auto integrand = [this, &xB, &t, &Q2, &E](const torch::Tensor& phi) -> torch::Tensor {
-        return aLUTensorBatch(xB, t, Q2, E, phi).getValue() * torch::sin(2. * phi);
+    // The pointwise layer is a static of the torch pointwise class, which this
+    // leaf no longer derives from (it derives from PARTONS::DVCSAluIntSin2Phi).
+    DVCSProcessModuleTorch& proc =
+            DVCSProcessModuleTorch::from(m_pProcessModule, getClassName());
+    auto integrand = [&proc, &xB, &t, &Q2, &E](const torch::Tensor& phi) -> torch::Tensor {
+        return DVCSAluIntTorch::aLUTensorBatch(proc, xB, t, Q2, E, phi).getValue() * torch::sin(2. * phi);
     };
 
     return PARTONS::PhysicalType<torch::Tensor>(
@@ -66,4 +75,16 @@ PARTONS::PhysicalType<torch::Tensor> DVCSAluIntSin2PhiTorch::computeTensorImpl(
     list.add(kinematic);
     PARTONS::PhysicalType<torch::Tensor> r = computeTensorImplBatch(list);
     return PARTONS::PhysicalType<torch::Tensor>(r.getValue()[0], r.getUnit());
+}
+
+PARTONS::PhysicalType<double> DVCSAluIntSin2PhiTorch::computeObservable(
+        const PARTONS::DVCSObservableKinematic& kinematic,
+        const PARTONS::List<PARTONS::GPDType>& gpdType) {
+    if (!DVCSProcessModuleTorch::tryFrom(m_pProcessModule))
+        return PARTONS::DVCSAluIntSin2Phi::computeObservable(kinematic, gpdType);
+
+    torch::NoGradGuard no_grad;
+    DVCSObservableResultTorch r = computeTensor(kinematic);
+    return PARTONS::PhysicalType<double>(r.getTensor().item<double>(),
+            r.getUnit());
 }

@@ -35,27 +35,17 @@ DVCSCrossSectionDifferenceLUMinusTorch* DVCSCrossSectionDifferenceLUMinusTorch::
     return new DVCSCrossSectionDifferenceLUMinusTorch(*this);
 }
 
-DVCSProcessModuleTorch* DVCSCrossSectionDifferenceLUMinusTorch::torchProcessModule() {
-    DVCSProcessModuleTorch* pProc =
-            dynamic_cast<DVCSProcessModuleTorch*>(m_pProcessModule);
-    if (!pProc) {
-        throw ElemUtils::CustomException(getClassName(), __func__,
-                "Tensor path requires a DVCSProcessModuleTorch process module.");
-    }
-    return pProc;
-}
-
-PARTONS::PhysicalType<torch::Tensor> DVCSCrossSectionDifferenceLUMinusTorch::crossSectionNbTensorBatch(const torch::Tensor& xB,
+PARTONS::PhysicalType<torch::Tensor> DVCSCrossSectionDifferenceLUMinusTorch::crossSectionNbTensorBatch(DVCSProcessModuleTorch& proc,
+        const torch::Tensor& xB,
         const torch::Tensor& t, const torch::Tensor& Q2,
         const torch::Tensor& E, const torch::Tensor& phi) {
 
-    DVCSProcessModuleTorch* pProc = torchProcessModule();
-    pProc->prepareTensorBatch(xB, t, Q2, E);
+    proc.prepareTensorBatch(xB, t, Q2, E);
 
     // Both beam helicities at charge -1, differenced as PARTONS::DVCSCrossSectionDifferenceLUMinus does.
-    PARTONS::PhysicalType<torch::Tensor> A = pProc->crossSectionTensorBatch(+1., -1., phi,
+    PARTONS::PhysicalType<torch::Tensor> A = proc.crossSectionTensorBatch(+1., -1., phi,
             PARTONS::VCSSubProcessType::ALL);
-    PARTONS::PhysicalType<torch::Tensor> B = pProc->crossSectionTensorBatch(-1., -1., phi,
+    PARTONS::PhysicalType<torch::Tensor> B = proc.crossSectionTensorBatch(-1., -1., phi,
             PARTONS::VCSSubProcessType::ALL);
 
     // The beam is UNPOLARIZED, so the helicities are AVERAGED (/2) -- where an
@@ -98,7 +88,9 @@ PARTONS::PhysicalType<torch::Tensor> DVCSCrossSectionDifferenceLUMinusTorch::com
     torch::Tensor phi = torch::tensor(phiVec, f64).unsqueeze(1); // [N] -> [N,1]
 
     PARTONS::PhysicalType<torch::Tensor> r =
-            crossSectionNbTensorBatch(xB, t, Q2, E, phi);
+            crossSectionNbTensorBatch(
+                    DVCSProcessModuleTorch::from(m_pProcessModule, getClassName()),
+                    xB, t, Q2, E, phi);
     return PARTONS::PhysicalType<torch::Tensor>(r.getValue().squeeze(1),
             r.getUnit()); // [N,1] -> [N]
 }
@@ -114,6 +106,9 @@ PARTONS::PhysicalType<torch::Tensor> DVCSCrossSectionDifferenceLUMinusTorch::com
 PARTONS::PhysicalType<double> DVCSCrossSectionDifferenceLUMinusTorch::computeObservable(
         const PARTONS::DVCSObservableKinematic& kinematic,
         const PARTONS::List<PARTONS::GPDType>& gpdType) {
+    if (!DVCSProcessModuleTorch::tryFrom(m_pProcessModule))
+        return PARTONS::DVCSCrossSectionDifferenceLUMinus::computeObservable(kinematic, gpdType);
+
     torch::NoGradGuard no_grad;
     DVCSObservableResultTorch r =
             computeTensor(kinematic);

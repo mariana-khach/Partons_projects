@@ -31,28 +31,17 @@ DVCSAluMinusTorch* DVCSAluMinusTorch::clone() const {
     return new DVCSAluMinusTorch(*this);
 }
 
-DVCSProcessModuleTorch* DVCSAluMinusTorch::torchProcessModule() {
-    DVCSProcessModuleTorch* pProc =
-            dynamic_cast<DVCSProcessModuleTorch*>(m_pProcessModule);
-    if (!pProc) {
-        throw ElemUtils::CustomException(getClassName(), __func__,
-                "Tensor path requires a DVCSProcessModuleTorch process module.");
-    }
-    return pProc;
-}
-
-PARTONS::PhysicalType<torch::Tensor> DVCSAluMinusTorch::aLUTensorBatch(const torch::Tensor& xB,
+PARTONS::PhysicalType<torch::Tensor> DVCSAluMinusTorch::aLUTensorBatch(DVCSProcessModuleTorch& proc,
+        const torch::Tensor& xB,
         const torch::Tensor& t, const torch::Tensor& Q2,
         const torch::Tensor& E, const torch::Tensor& phi) {
-
-    DVCSProcessModuleTorch* pProc = torchProcessModule();
 
     // Hoist the phi-/helicity-independent setup out of the per-helicity calls:
     // prepare once (N-point kinematics + one batched NN forward), then let the
     // variant assemble the cross sections its own formula needs from the
     // cached state.
-    pProc->prepareTensorBatch(xB, t, Q2, E);
-    return asymmetryTensorBatch(*pProc, phi);
+    proc.prepareTensorBatch(xB, t, Q2, E);
+    return asymmetryTensorBatch(proc, phi);
 }
 
 PARTONS::PhysicalType<torch::Tensor> DVCSAluMinusTorch::asymmetryTensorBatch(
@@ -104,7 +93,9 @@ PARTONS::PhysicalType<torch::Tensor> DVCSAluMinusTorch::computeTensorImplBatch(
     torch::Tensor E   = torch::tensor(EVec, f64);
     torch::Tensor phi = torch::tensor(phiVec, f64).unsqueeze(1); // [N] -> [N,1]
 
-    PARTONS::PhysicalType<torch::Tensor> r = aLUTensorBatch(xB, t, Q2, E, phi);
+    PARTONS::PhysicalType<torch::Tensor> r = aLUTensorBatch(
+            DVCSProcessModuleTorch::from(m_pProcessModule, getClassName()),
+            xB, t, Q2, E, phi);
     return PARTONS::PhysicalType<torch::Tensor>(r.getValue().squeeze(1),
             r.getUnit()); // [N,1] -> [N]
 }
@@ -124,6 +115,8 @@ PARTONS::PhysicalType<torch::Tensor> DVCSAluMinusTorch::computeTensorImpl(
 PARTONS::PhysicalType<double> DVCSAluMinusTorch::computeObservable(
         const PARTONS::DVCSObservableKinematic& kinematic,
         const PARTONS::List<PARTONS::GPDType>& gpdType) {
+    if (!DVCSProcessModuleTorch::tryFrom(m_pProcessModule))
+        return PARTONS::DVCSAluMinus::computeObservable(kinematic, gpdType);
 
     torch::NoGradGuard no_grad;
     DVCSObservableResultTorch r =

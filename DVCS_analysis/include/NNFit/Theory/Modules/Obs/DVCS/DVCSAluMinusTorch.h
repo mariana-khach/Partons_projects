@@ -25,15 +25,15 @@ class DVCSProcessModuleTorch;
  *        beam-spin asymmetry for negative beam charge:
  *          A_LU(phi) = (sigma(+) - sigma(-)) / (sigma(+) + sigma(-)).
  *
- * Mirrors the scalar hierarchy exactly: this is the reusable pointwise layer
- * (sibling of DVCSAluMinus), and Fourier-moment observables
- * (DVCSAluMinusSin1PhiTorch, a future DVCSAluMinusCos0PhiTorch, ...) derive from
- * it and reuse aLUTensorBatch() — just as the scalar moment classes derive from
- * DVCSAluMinus and reuse its computeObservable().
+ * This is the reusable pointwise layer. The Fourier-moment leaves
+ * (DVCSAluMinusSin1PhiTorch, DVCSAluMinusSin2PhiTorch) reuse its static
+ * aLUTensorBatch() but do NOT derive from it: each derives from its own PARTONS
+ * moment class, which derives from PARTONS::DVCSAluMinus -- so every torch
+ * class sits directly under the PARTONS class it mirrors.
  *
- * Subclasses PARTONS::DVCSAluMinus so it is a scalar drop-in; the inherited
- * scalar computeObservable() is overridden to return computeTensor().item()
- * (no gradient), making the tensor computation the single source of truth.
+ * Subclasses PARTONS::DVCSAluMinus so it is a scalar drop-in. The scalar
+ * computeObservable() runs the tensor chain (detached) on a torch process
+ * module, and PARTONS' own DVCSAluMinus on any other.
  */
 class DVCSAluMinusTorch: public PARTONS::DVCSAluMinus,
         public DVCSObservableTorch {
@@ -46,6 +46,24 @@ public:
     virtual ~DVCSAluMinusTorch();
 
     virtual DVCSAluMinusTorch* clone() const override;
+
+    /**
+     * Reusable pointwise asymmetry A_LU(phi), batched over N data points x M
+     * phi nodes: prepare the process once (hoisting the helicity-independent
+     * setup), then hand off to asymmetryTensorBatch(), which assembles the
+     * cross sections its own formula needs.
+     *
+     * Static and public because the Fourier-moment leaves call it WITHOUT
+     * deriving from this class: they derive from their PARTONS moment class
+     * (DVCSAluMinusSin1Phi, ...), which already derives from
+     * PARTONS::DVCSAluMinus, so inheriting this class too would give them two
+     * DVCSAluMinus subobjects.
+     * @return [N,M] tensor A_LU(phi), grad-connected to the NN CFF parameters.
+     */
+    static PARTONS::PhysicalType<torch::Tensor> aLUTensorBatch(DVCSProcessModuleTorch& proc,
+            const torch::Tensor& xB, const torch::Tensor& t,
+            const torch::Tensor& Q2, const torch::Tensor& E,
+            const torch::Tensor& phi);
 
 protected:
 
@@ -62,19 +80,6 @@ protected:
      */
     PARTONS::PhysicalType<torch::Tensor> computeTensorImpl(
             const PARTONS::DVCSObservableKinematic& kinematic) override;
-
-    /**
-     * Reusable pointwise asymmetry A_LU(phi), batched over N data points x M
-     * phi nodes. Shared by every Fourier-moment subclass: prepare once
-     * (hoisting the helicity-independent setup), then hand off to the
-     * asymmetryTensorBatch() hook, which assembles the cross sections its own
-     * formula needs -- driven through the abstract DVCSProcessModuleTorch*
-     * base, no concrete process-module type required.
-     * @return [N,M] tensor A_LU(phi), grad-connected to the NN CFF parameters.
-     */
-    PARTONS::PhysicalType<torch::Tensor> aLUTensorBatch(const torch::Tensor& xB, const torch::Tensor& t,
-            const torch::Tensor& Q2, const torch::Tensor& E,
-            const torch::Tensor& phi);
 
     /**
      * Batched (N-point) sibling of computeTensorImpl(): pointwise A_LU(phi)
@@ -95,13 +100,15 @@ protected:
             const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics)
             override;
 
-    /** Scalar wrapper over computeTensor() (detached) for the scalar pipeline. */
+    /**
+     * Scalar entry point. On a torch process: computeTensor() under
+     * NoGradGuard, detached. On any other process: the native PARTONS::DVCSAluMinus
+     * this class derives from, so the leaf composes with any process module.
+     */
     virtual PARTONS::PhysicalType<double> computeObservable(
             const PARTONS::DVCSObservableKinematic& kinematic,
             const PARTONS::List<PARTONS::GPDType>& gpdType) override;
 
-    /** Cross-cast the attached process module to its tensor interface. */
-    DVCSProcessModuleTorch* torchProcessModule();
 
 protected:
 
@@ -128,7 +135,7 @@ protected:
      * @param phi  [M] shared quadrature nodes, or [N,1] per-point own phi.
      * @return Same shape as phi broadcast against [N]: [N,M] or [N,1].
      */
-    virtual PARTONS::PhysicalType<torch::Tensor> asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
+    static PARTONS::PhysicalType<torch::Tensor> asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
             const torch::Tensor& phi);
 };
 

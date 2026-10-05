@@ -8,6 +8,7 @@
 #include <ElementaryUtils/logger/CustomException.h>
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
 #include <partons/beans/process/VCSSubProcessType.h>
+#include <partons/modules/process/DVCS/DVCSProcessModule.h>
 #include <partons/utils/type/PhysicalType.h>
 #include <partons/utils/type/PhysicalUnit.h>
 #include <torch/torch.h>
@@ -43,6 +44,35 @@ class DVCSProcessModuleTorch
 public:
 
     virtual ~DVCSProcessModuleTorch() = default;
+
+    /**
+     * The tensor interface of a PARTONS process module, or nullptr when it has
+     * none (a plain DVCSProcessBMJ12, BM03, ...). A cross-cast: this mixin and
+     * PARTONS::DVCSProcessModule are unrelated bases of one complete object,
+     * so static_cast cannot express it.
+     *
+     * The torch observable leaves branch on this: a torch process runs the
+     * tensor chain, anything else runs the leaf's native PARTONS twin.
+     */
+    static DVCSProcessModuleTorch* tryFrom(PARTONS::DVCSProcessModule* pProc) {
+        return dynamic_cast<DVCSProcessModuleTorch*>(pProc);
+    }
+
+    /**
+     * As tryFrom(), but for the tensor path, which has no fallback: a gradient
+     * cannot come out of native double arithmetic, so a non-torch process is
+     * an error there.
+     * @param className the calling observable, for the message.
+     */
+    static DVCSProcessModuleTorch& from(PARTONS::DVCSProcessModule* pProc,
+            const std::string& className) {
+        DVCSProcessModuleTorch* pTorch = tryFrom(pProc);
+        if (!pTorch) {
+            throw ElemUtils::CustomException(className, __func__,
+                    "Tensor path requires a DVCSProcessModuleTorch process module.");
+        }
+        return *pTorch;
+    }
 
 
     /**

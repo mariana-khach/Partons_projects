@@ -30,8 +30,10 @@ class DVCSProcessModuleTorch;
  * its own formula over ProcessModule::compute(). The repeated machinery here
  * (prepare/assemble, the own-phi unpack) is the price of that mirroring.
  *
- * Fourier-moment leaves derive from this and reuse aLUTensorBatch(), exactly as
- * the scalar moment classes derive from PARTONS::DVCSAluPlus.
+ * Fourier-moment leaves reuse the static aLUTensorBatch() without deriving
+ * from this class: each derives from its own PARTONS moment class, which
+ * derives from PARTONS::DVCSAluPlus -- so every torch class sits directly under
+ * the PARTONS class it mirrors.
  */
 class DVCSAluPlusTorch: public PARTONS::DVCSAluPlus, public DVCSObservableTorch {
 
@@ -61,24 +63,27 @@ public:
      * each point's own phi. Prepares the process module once, then delegates
      * the formula to asymmetryTensorBatch().
      */
-    PARTONS::PhysicalType<torch::Tensor> aLUTensorBatch(const torch::Tensor& xB, const torch::Tensor& t,
+    static PARTONS::PhysicalType<torch::Tensor> aLUTensorBatch(DVCSProcessModuleTorch& proc,
+            const torch::Tensor& xB, const torch::Tensor& t,
             const torch::Tensor& Q2, const torch::Tensor& E,
             const torch::Tensor& phi);
 
-    /** Scalar wrapper over computeTensor() (detached) for the scalar pipeline. */
+    /**
+     * Scalar entry point. On a torch process: computeTensor() under
+     * NoGradGuard, detached. On any other process: the native PARTONS::DVCSAluPlus
+     * this class derives from, so the leaf composes with any process module.
+     */
     virtual PARTONS::PhysicalType<double> computeObservable(
             const PARTONS::DVCSObservableKinematic& kinematic,
             const PARTONS::List<PARTONS::GPDType>& gpdType) override;
 
-    /** Cross-cast the attached process module to its tensor interface. */
-    DVCSProcessModuleTorch* torchProcessModule();
 
 protected:
 
     DVCSAluPlusTorch(const DVCSAluPlusTorch& other);
 
     /** The asymmetry formula; see the class brief. */
-    virtual PARTONS::PhysicalType<torch::Tensor> asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
+    static PARTONS::PhysicalType<torch::Tensor> asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
             const torch::Tensor& phi);
 };
 

@@ -7,6 +7,8 @@
 
 #include <partons/beans/List.h>
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
+#include <partons/beans/gpd/GPDType.h>
+#include <partons/modules/observable/DVCS/asymmetry/DVCSAluIntSin1Phi.h>
 #include <partons/utils/type/PhysicalType.h>
 #include <partons/utils/type/PhysicalUnit.h>
 #include <torch/torch.h>
@@ -27,11 +29,14 @@
  * mirroring the scalar class exactly -- same weight, same 1/pi normalization,
  * same reuse of the parent's pointwise asymmetry as the integrand.
  *
- * Derives from DVCSAluIntTorch (the pointwise layer) plus MathIntegratorModuleTorch
- * (a pure mixin, so no diamond), just as PARTONS::DVCSAluIntSin1Phi derives from its own
- * pointwise class plus MathIntegratorModule.
+ * Derives from PARTONS::DVCSAluIntSin1Phi itself -- and through it from its pointwise
+ * PARTONS class, exactly like the scalar class -- plus the DVCSObservableTorch
+ * and MathIntegratorModuleTorch mixins. The pointwise tensor layer is reused by
+ * calling DVCSAluIntTorch's static aLUTensorBatch(), not by inheriting
+ * DVCSAluIntTorch, which would duplicate the PARTONS pointwise base.
  */
-class DVCSAluIntSin1PhiTorch: public DVCSAluIntTorch, public MathIntegratorModuleTorch {
+class DVCSAluIntSin1PhiTorch: public PARTONS::DVCSAluIntSin1Phi,
+        public DVCSObservableTorch, public MathIntegratorModuleTorch {
 
 public:
 
@@ -59,6 +64,17 @@ protected:
     PARTONS::PhysicalType<torch::Tensor> computeTensorImplBatch(
             const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics)
             override;
+
+    /**
+     * Scalar entry point. On a torch process: computeTensor() under
+     * NoGradGuard, detached. On any other process: the native
+     * PARTONS::DVCSAluIntSin1Phi this class derives from -- its own phi
+     * integral over PARTONS::DVCSAluInt, so the leaf composes with any
+     * process module, as its scalar twin does.
+     */
+    virtual PARTONS::PhysicalType<double> computeObservable(
+            const PARTONS::DVCSObservableKinematic& kinematic,
+            const PARTONS::List<PARTONS::GPDType>& gpdType) override;
 };
 
 #endif /* DVCS_ALU_INT_SIN1PHI_TORCH_H */

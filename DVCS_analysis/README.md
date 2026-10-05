@@ -1095,9 +1095,16 @@ setting limits from the *values*.  The other two are unaffected (errors comparab
   a threshold — would stop that recurring across the remaining 37 observables.
 - **Unpolarized-target only** on the tensor path — the torch BMJ12 port omits the LP/TP
   coefficient rows.  Correct for A_LU and siblings; for polarized-target observables use the
-  base PARTONS classes.  The determining factor is the **observable leaf**, not the process
-  module (a `*Torch` leaf routes into the tensor physics however you drive it).  See
-  `CLAUDE.md` for the full caveat table.
+  base PARTONS classes.  A `*Torch` leaf on a **torch** process routes into the tensor physics
+  however you drive it; on any other process (since 2026-10-05) its scalar path runs the native
+  PARTONS class it derives from, with full coverage.  See `CLAUDE.md` for the full caveat table.
+- **Every torch observable composes with any DVCS process module (2026-10-05).**  The 12 moment
+  and φ-integrated leaves were re-parented onto their PARTONS moment classes
+  (`DVCSAluMinusSin1PhiTorch : PARTONS::DVCSAluMinusSin1Phi`, …), so each torch class sits
+  directly under the PARTONS class it mirrors, and each leaf's scalar `computeObservable` falls
+  back to that class when the process has no tensor interface.  The tensor path still requires
+  `DVCSProcessBMJ12Torch`.  The pointwise tensor layers became statics, since a re-parented
+  moment can no longer inherit the torch pointwise class.
 - ~~Torch chain carries no unit system~~ **resolved 2026-09-23** — the chain now carries
   `PhysicalType<torch::Tensor>` and returns an `ObservableResultTorch<K>` bean, so the GeV⁻² → nb
   conversion is a `makeSameUnitAs()` call rather than a hand-copied constant and a unit mismatch

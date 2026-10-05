@@ -2,6 +2,7 @@
 // Created by Mariana Khachatryan on 9/23/26.
 //
 
+#include "NNFit/Theory/Beans/Obs/DVCS/DVCSObservableResultTorch.h"
 #include "NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUMinusPhiIntegratedTorch.h"
 
 #include <NumA/integration/one_dimension/IntegratorType1D.h>
@@ -10,12 +11,15 @@
 
 #include <vector>
 
+#include "NNFit/Theory/Modules/Processes/DVCS/DVCSProcessModuleTorch.h"
+
 const unsigned int DVCSCrossSectionUUMinusPhiIntegratedTorch::classId =
         PARTONS::BaseObjectRegistry::getInstance()->registerBaseObject(
                 new DVCSCrossSectionUUMinusPhiIntegratedTorch("DVCSCrossSectionUUMinusPhiIntegratedTorch"));
 
 DVCSCrossSectionUUMinusPhiIntegratedTorch::DVCSCrossSectionUUMinusPhiIntegratedTorch(const std::string& className)
-        : DVCSCrossSectionUUMinusTorch(className), MathIntegratorModuleTorch() {
+        : PARTONS::DVCSCrossSectionUUMinusPhiIntegrated(className), DVCSObservableTorch(),
+          MathIntegratorModuleTorch() {
     // GL-160 -- four times the asymmetry leaves' 40, and this leaf is the ONLY
     // one in the family that needs it. Its integrand is the FULL cross section,
     // so it carries the Bethe-Heitler peak at the interval ends (phi -> 0 and
@@ -50,7 +54,8 @@ DVCSCrossSectionUUMinusPhiIntegratedTorch::DVCSCrossSectionUUMinusPhiIntegratedT
 }
 
 DVCSCrossSectionUUMinusPhiIntegratedTorch::DVCSCrossSectionUUMinusPhiIntegratedTorch(const DVCSCrossSectionUUMinusPhiIntegratedTorch& other)
-        : DVCSCrossSectionUUMinusTorch(other), MathIntegratorModuleTorch(other) {
+        : PARTONS::DVCSCrossSectionUUMinusPhiIntegrated(other), DVCSObservableTorch(other),
+          MathIntegratorModuleTorch(other) {
 }
 
 DVCSCrossSectionUUMinusPhiIntegratedTorch::~DVCSCrossSectionUUMinusPhiIntegratedTorch() {
@@ -80,8 +85,12 @@ PARTONS::PhysicalType<torch::Tensor> DVCSCrossSectionUUMinusPhiIntegratedTorch::
     torch::Tensor Q2 = torch::tensor(Q2Vec, f64);
     torch::Tensor E  = torch::tensor(EVec, f64);
 
-    auto integrand = [this, &xB, &t, &Q2, &E](const torch::Tensor& phi) -> torch::Tensor {
-        return crossSectionNbTensorBatch(xB, t, Q2, E, phi).getValue();
+    // The pointwise layer is a static of the torch pointwise class, which this
+    // leaf no longer derives from (it derives from PARTONS::DVCSCrossSectionUUMinusPhiIntegrated).
+    DVCSProcessModuleTorch& proc =
+            DVCSProcessModuleTorch::from(m_pProcessModule, getClassName());
+    auto integrand = [&proc, &xB, &t, &Q2, &E](const torch::Tensor& phi) -> torch::Tensor {
+        return DVCSCrossSectionUUMinusTorch::crossSectionNbTensorBatch(proc, xB, t, Q2, E, phi).getValue();
     };
 
     // No normalization -- PARTONS::DVCSCrossSectionUUMinusPhiIntegrated returns the bare
@@ -97,4 +106,16 @@ PARTONS::PhysicalType<torch::Tensor> DVCSCrossSectionUUMinusPhiIntegratedTorch::
     list.add(kinematic);
     PARTONS::PhysicalType<torch::Tensor> r = computeTensorImplBatch(list);
     return PARTONS::PhysicalType<torch::Tensor>(r.getValue()[0], r.getUnit());
+}
+
+PARTONS::PhysicalType<double> DVCSCrossSectionUUMinusPhiIntegratedTorch::computeObservable(
+        const PARTONS::DVCSObservableKinematic& kinematic,
+        const PARTONS::List<PARTONS::GPDType>& gpdType) {
+    if (!DVCSProcessModuleTorch::tryFrom(m_pProcessModule))
+        return PARTONS::DVCSCrossSectionUUMinusPhiIntegrated::computeObservable(kinematic, gpdType);
+
+    torch::NoGradGuard no_grad;
+    DVCSObservableResultTorch r = computeTensor(kinematic);
+    return PARTONS::PhysicalType<double>(r.getTensor().item<double>(),
+            r.getUnit());
 }
