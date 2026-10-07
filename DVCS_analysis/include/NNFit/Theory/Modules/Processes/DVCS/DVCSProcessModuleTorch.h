@@ -15,7 +15,10 @@
 #include <partons/beans/convol_coeff_function/DVCS/DVCSConvolCoeffFunctionResult.h>
 #include <partons/beans/gpd/GPDType.h>
 #include <partons/beans/List.h>
+#include <partons/beans/Scales.h>
 #include <partons/modules/convol_coeff_function/DVCS/DVCSConvolCoeffFunctionModule.h>
+#include <partons/modules/scales/DVCS/DVCSScalesModule.h>
+#include <partons/modules/xi_converter/DVCS/DVCSXiConverterModule.h>
 #include <torch/torch.h>
 
 #include <complex>
@@ -111,6 +114,10 @@ public:
      */
     void prepareTensorBatch(const torch::Tensor& xB, const torch::Tensor& t,
             const torch::Tensor& Q2, const torch::Tensor& E) {
+        // Same order as PARTONS' DVCSProcessModule::compute():
+        // computeConvolCoeffFunction (generic, here) before initModule (the
+        // concrete process's own setup, which reads the stored CFFs).
+        m_cffsBatch = computeConvolCoeffFunctionTensorBatch(xB, t, Q2, E);
         setupKinematicsTorchBatch(xB, t, Q2, E);
         m_preparedBatch = true;
     }
@@ -182,14 +189,73 @@ public:
 protected:
 
     /**
-     * Batched (N-point) sibling of setupKinematicsTorch: the BMJ12 derived
-     * quantities and angular coefficients as [N]-tensor arithmetic, plus one
-     * batched NN forward for the CFFs. Called once via prepareTensorBatch()
-     * before the batched sub-process atoms.
+     * The concrete process's own phi-independent setup over N points -- the
+     * tensor twin of PARTONS' initModule() in a concrete process: its derived
+     * kinematics and angular coefficients, and whatever it builds from the
+     * CFFs, which prepareTensorBatch() has already stored in m_cffsBatch. The
+     * generic CFF step is not the process's business, exactly as no PARTONS
+     * process calls computeConvolCoeffFunction itself.
      */
     virtual void setupKinematicsTorchBatch(const torch::Tensor& xB,
             const torch::Tensor& t, const torch::Tensor& Q2,
             const torch::Tensor& E) = 0;
+
+    /**
+     * The CFFs at N points, as [N] complex tensors -- the tensor twin of
+     * PARTONS' DVCSProcessModule::computeConvolCoeffFunction, and like it
+     * generic: identical for every DVCS process, so it lives here rather than
+     * in a concrete process. The process converts and the CFF module receives:
+     * the xi-converter and scales modules the process is wired with turn
+     * (xB, t, Q2, E) into the CCF kinematics (xi, t, Q2, muF2, muR2), once per
+     * prepare (N scalar calls).
+     *
+     * Any CFF module PARTONS accepts is accepted here. One implementing
+     * DVCSConvolCoeffFunctionModuleTorch (the network) is asked for tensors
+     * directly -- the path that carries a gradient; any other is evaluated per
+     * point by scalarCFFsTensorBatch().
+     *
+     * The modules are read through PARTONS' public getters on the process's
+     * own PARTONS base (a cross-cast: this mixin is not a PARTONS class).
+     */
+    DVCSConvolCoeffFunctionModuleTorch::AllCFFsTensorBatch
+    computeConvolCoeffFunctionTensorBatch(const torch::Tensor& xB,
+            const torch::Tensor& t, const torch::Tensor& Q2,
+            const torch::Tensor& E) {
+
+        PARTONS::DVCSProcessModule* self =
+                dynamic_cast<PARTONS::DVCSProcessModule*>(this);
+        if (!self) {
+            throw ElemUtils::CustomException("DVCSProcessModuleTorch", __func__,
+                    "A torch process must also derive from PARTONS::DVCSProcessModule.");
+        }
+        PARTONS::DVCSConvolCoeffFunctionModule* pCCF =
+                self->getConvolCoeffFunctionModule();
+        if (!pCCF) {
+            throw ElemUtils::CustomException(self->getClassName(), __func__,
+                    "No convol-coeff function module set.");
+        }
+
+        const int64_t N = xB.size(0);
+        std::vector<double> xiVec(N), muF2Vec(N), muR2Vec(N);
+        for (int64_t i = 0; i < N; ++i) {
+            PARTONS::DVCSObservableKinematic kin(xB[i].item<double>(),
+                    t[i].item<double>(), Q2[i].item<double>(),
+                    E[i].item<double>(), 0.); // phi is irrelevant to both modules
+            xiVec[i] = self->getXiConverterModule()->compute(kin).getValue();
+            PARTONS::Scales scale = self->getScaleModule()->compute(kin);
+            muF2Vec[i] = scale.getMuF2().getValue();
+            muR2Vec[i] = scale.getMuR2().getValue();
+        }
+        const torch::TensorOptions f64 = torch::TensorOptions().dtype(torch::kFloat64);
+        torch::Tensor xi   = torch::tensor(xiVec, f64);
+        torch::Tensor muF2 = torch::tensor(muF2Vec, f64);
+        torch::Tensor muR2 = torch::tensor(muR2Vec, f64);
+
+        DVCSConvolCoeffFunctionModuleTorch* pTorch =
+                dynamic_cast<DVCSConvolCoeffFunctionModuleTorch*>(pCCF);
+        return pTorch ? pTorch->computeAllCFFsTensorBatch(xi, t, Q2, muF2, muR2)
+                      : scalarCFFsTensorBatch(*pCCF, xi, t, Q2, muF2, muR2);
+    }
 
     /**
      * The CFFs of a SCALAR PARTONS CFF module (DVCSCFFConstant,
@@ -258,6 +324,11 @@ protected:
         cffs.Et = cff[3];
         return cffs;
     }
+
+    /// CFFs of the current batch, set by prepareTensorBatch() before
+    /// setupKinematicsTorchBatch() runs -- twin of PARTONS'
+    /// DVCSProcessModule::m_dvcsConvolCoeffFunctionResult.
+    DVCSConvolCoeffFunctionModuleTorch::AllCFFsTensorBatch m_cffsBatch;
 
     /// Set by prepareTensorBatch(); gates the assemble-only batched overloads.
     bool m_preparedBatch = false;

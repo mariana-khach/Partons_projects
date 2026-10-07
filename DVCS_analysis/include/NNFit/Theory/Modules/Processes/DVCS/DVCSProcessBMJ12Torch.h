@@ -30,11 +30,11 @@
  * For the tensor path it adds crossSectionTensorBatch(): the BMJ12
  * unpolarized-target cross section sigma(lambda, phi), batched over N
  * kinematic points x M phi nodes, with the CFFs taken as [N] complex tensors.
- * Any PARTONS CFF module may be attached: one implementing DVCSConvolCoeffFunctionModuleTorch
- * (DVCSCFFNNTorch) is asked for tensors directly -- with
- * the network, the autograd graph then runs from the NN parameters to the
- * cross section -- and any other is evaluated per point through its scalar
- * compute() and packed into no-grad tensors (scalarCFFsTensorBatch).
+ * The CFFs come from the base DVCSProcessModuleTorch, which fetches them
+ * generically before this class's setup runs (any PARTONS CFF module; with
+ * the network the autograd graph runs from the NN parameters to the cross
+ * section) -- as PARTONS' DVCSProcessModule does for its concrete processes.
+ * This class holds only BMJ12 itself.
  *
  * The pure-kinematic BMJ12 machinery (Fourier/angular coefficients, K, epsilon,
  * form factors, phase space, ...) is transcribed verbatim from
@@ -77,11 +77,10 @@ protected:
 private:
 
     /**
-     * Batched (N-point) sibling of setupKinematicsTorch: the BMJ12 derived
-     * quantities and angular coefficients as [N]-tensor arithmetic, plus one
-     * batched CFF evaluation (a single NN forward for the network; N scalar
-     * calls for a plain PARTONS CFF module). Called once per batch by
-     * prepareTensorBatch().
+     * The BMJ12 derived quantities and angular coefficients as [N]-tensor
+     * arithmetic, plus the BMJ12 helicity combinations of the CFFs the base
+     * already stored in m_cffsBatch. Twin of DVCSProcessBMJ12::initModule();
+     * called once per batch by prepareTensorBatch().
      */
     void setupKinematicsTorchBatch(const torch::Tensor& xB, const torch::Tensor& t,
             const torch::Tensor& Q2, const torch::Tensor& E) override;

@@ -672,7 +672,8 @@ DVCSAluMinusSin1PhiTorch::computeTensorImplBatch (moment)  ↔  DVCSAluMinusSin1
    integrateTorchBatch, fixed GL-40                        ↔     integrate, adaptive DEXP
 DVCSAluMinusTorch::aLUTensorBatch (static, pointwise)      ↔  DVCSAluMinus::computeObservable
 DVCSProcessModuleTorch::prepareTensorBatch                 ↔  DVCSProcessModule::compute — setup half
-   setupKinematicsTorchBatch                               ↔     setKinematics + computeConvolCoeffFunction
+   computeConvolCoeffFunctionTensorBatch  (generic)        ↔     computeConvolCoeffFunction  (generic)
+   setupKinematicsTorchBatch  (BMJ12-specific)             ↔     initModule  (BMJ12-specific)
 DVCSProcessModuleTorch::crossSectionTensorBatch (Σ)        ↔  DVCSProcessModule::compute(…,VCSSubProcessType)
    → PhysicalType<torch::Tensor> (GEVm2)                   ↔     → PhysicalType<double> (GEVm2)
    crossSectionBH/VCS/InterfTensorBatch                    ↔     CrossSectionBH/VCS/Interf

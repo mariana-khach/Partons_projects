@@ -12,20 +12,10 @@
 
 #include <partons/utils/type/PhysicalUnit.h>
 
-#include <ElementaryUtils/logger/CustomException.h>
 #include <partons/BaseObjectRegistry.h>
 #include <partons/FundamentalPhysicalConstants.h>
 
 #include <cmath>
-
-// Complete type needed as the SOURCE of the cross-cast below:
-// DVCSProcessModule.h only forward-declares DVCSConvolCoeffFunctionModule.
-#include <partons/modules/convol_coeff_function/DVCS/DVCSConvolCoeffFunctionModule.h>
-
-#include <partons/beans/Scales.h>
-#include <partons/modules/scales/DVCS/DVCSScalesModule.h>
-#include <partons/modules/xi_converter/DVCS/DVCSXiConverterModule.h>
-#include "NNFit/Theory/Modules/CFFs/DVCS/DVCSConvolCoeffFunctionModuleTorch.h"
 
 // ---------------------------------------------------------------------------
 // Registration / boilerplate
@@ -490,50 +480,16 @@ void DVCSProcessBMJ12Torch::setupKinematicsTorchBatch(const torch::Tensor& xB,
                 * (1. + m_epsrootBatch[0] - tQ2 * (1. - 2 * xB - m_epsrootBatch[0]));
     }
 
-    // ----- CFFs as tensors, batched ----------------------------------------
-    // The process module converts, the CFF module receives -- exactly as in
-    // DVCSProcessModule::computeConvolCoeffFunction, which runs the
-    // xi-converter and the scales module and hands the CFF module
-    // (xi, t, Q2, muF2, muR2). Same modules this process is wired with, so the
-    // torch path cannot drift from the scalar path's conventions. N scalar
-    // calls, once per prepare (not per phi node, not per epoch step).
-    const int64_t nPts = xB.size(0);
-    std::vector<double> xiVec(nPts), muF2Vec(nPts), muR2Vec(nPts);
-    for (int64_t i = 0; i < nPts; ++i) {
-        PARTONS::DVCSObservableKinematic kin(xB[i].item<double>(),
-                t[i].item<double>(), Q2[i].item<double>(), E[i].item<double>(),
-                0.); // phi is irrelevant to both modules
-        xiVec[i]   = m_pXiConverterModule->compute(kin).getValue();
-        PARTONS::Scales scale = m_pScaleModule->compute(kin);
-        muF2Vec[i] = scale.getMuF2().getValue();
-        muR2Vec[i] = scale.getMuR2().getValue();
-    }
-    const torch::TensorOptions f64opt = torch::TensorOptions().dtype(torch::kFloat64);
-    torch::Tensor xiT   = torch::tensor(xiVec, f64opt);
-    torch::Tensor muF2T = torch::tensor(muF2Vec, f64opt);
-    torch::Tensor muR2T = torch::tensor(muR2Vec, f64opt);
-
-    // Any CFF module PARTONS accepts, this accepts -- as the scalar process
-    // does. A module implementing the tensor interface (the trained network)
-    // is asked for tensors directly; that is the path that carries a
-    // gradient. Any other PARTONS CFF module is evaluated per point through
-    // its ordinary scalar compute() (scalarCFFsTensorBatch) and packed into
-    // no-grad tensors -- which loses nothing, since a parametric model has no
-    // parameters in the graph to differentiate.
-    if (!m_pConvolCoeffFunctionModule) {
-        throw ElemUtils::CustomException(getClassName(), __func__,
-                "No convol-coeff function module set.");
-    }
-    DVCSConvolCoeffFunctionModuleTorch* pCFF =
-            dynamic_cast<DVCSConvolCoeffFunctionModuleTorch*>(m_pConvolCoeffFunctionModule);
-    DVCSConvolCoeffFunctionModuleTorch::AllCFFsTensorBatch cffs = pCFF
-            ? pCFF->computeAllCFFsTensorBatch(xiT, t, Q2, muF2T, muR2T)
-            : scalarCFFsTensorBatch(
-                    *m_pConvolCoeffFunctionModule, xiT, t, Q2, muF2T, muR2T);
-    m_CFFstdBatch[0] = cffs.H;
-    m_CFFstdBatch[1] = cffs.E;
-    m_CFFstdBatch[2] = cffs.Ht;
-    m_CFFstdBatch[3] = cffs.Et;
+    // ----- CFFs ---------------------------------------------------------------
+    // Already computed by the base -- prepareTensorBatch() runs the generic
+    // computeConvolCoeffFunctionTensorBatch() before this hook, as PARTONS'
+    // DVCSProcessModule::compute() runs computeConvolCoeffFunction() before a
+    // concrete process's initModule(). BMJ12 only folds them into its own
+    // helicity combinations.
+    m_CFFstdBatch[0] = m_cffsBatch.H;
+    m_CFFstdBatch[1] = m_cffsBatch.E;
+    m_CFFstdBatch[2] = m_cffsBatch.Ht;
+    m_CFFstdBatch[3] = m_cffsBatch.Et;
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 3; j++) {
             m_CFFBatch[i][j] = m_cFBatch[j] * m_CFFstdBatch[i];
