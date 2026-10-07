@@ -30,7 +30,7 @@
  * For the tensor path it adds crossSectionTensorBatch(): the BMJ12
  * unpolarized-target cross section sigma(lambda, phi), batched over N
  * kinematic points x M phi nodes, with the CFFs taken as [N] complex tensors.
- * Any PARTONS CFF module may be attached: one implementing DVCSCFFModuleTorch
+ * Any PARTONS CFF module may be attached: one implementing DVCSConvolCoeffFunctionModuleTorch
  * (DVCSCFFNNTorch) is asked for tensors directly -- with
  * the network, the autograd graph then runs from the NN parameters to the
  * cross section -- and any other is evaluated per point through its scalar

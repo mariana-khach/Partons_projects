@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-#include "NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFModuleTorch.h"
+#include "NNFit/Theory/Modules/CFFs/DVCS/DVCSConvolCoeffFunctionModuleTorch.h"
 #include "NNFit/Theory/Modules/Processes/ProcessModuleTorch.h"
 
 /**
@@ -196,7 +196,7 @@ protected:
      * DVCSCFFStandard, ...) as tensors: one ordinary compute() per point, all
      * four CFFs per call, packed into [N] no-grad complex tensors. This is how
      * a torch process accepts any CFF module PARTONS accepts, as the scalar
-     * process does; a module implementing DVCSCFFModuleTorch is asked for
+     * process does; a module implementing DVCSConvolCoeffFunctionModuleTorch is asked for
      * tensors directly instead. No gradient is lost -- a parametric model has
      * no parameters in the graph.
      *
@@ -204,7 +204,7 @@ protected:
      * network's behaviour for CFFs outside its output layer.
      * @param xi,t,Q2,muF2,muR2 [N] CCF kinematics, converted by the process.
      */
-    static DVCSCFFModuleTorch::AllCFFsTensorBatch scalarCFFsTensorBatch(
+    static DVCSConvolCoeffFunctionModuleTorch::AllCFFsTensorBatch scalarCFFsTensorBatch(
             PARTONS::DVCSConvolCoeffFunctionModule& scalarCFF,
             const torch::Tensor& xi, const torch::Tensor& t,
             const torch::Tensor& Q2, const torch::Tensor& muF2,
@@ -251,7 +251,7 @@ protected:
                     torch::tensor(im[k], f64)); // [N] complex double, no grad
         }
 
-        DVCSCFFModuleTorch::AllCFFsTensorBatch cffs;
+        DVCSConvolCoeffFunctionModuleTorch::AllCFFsTensorBatch cffs;
         cffs.H  = cff[0];
         cffs.E  = cff[1];
         cffs.Ht = cff[2];

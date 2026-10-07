@@ -71,11 +71,11 @@ This is the active development area. It implements a differentiable pipeline:
 6. `train_replicas(n_replicas, …)` — trains a Monte Carlo replica ensemble for a CFF uncertainty band: each replica independently fits Monte-Carlo-smeared pseudodata (`y_smeared = y_obs + N(0, sigma)`), with a fresh train/val split, fresh weight init, and fresh optimizer per replica, via the shared `fit_once()` helper (also used internally by `train_nn()` for the unsmeared central fit). A replica whose validation loss diverges (NaN/Inf) or stays above a "hopeless" reduced-χ²/n threshold at a periodic checkpoint epoch is discarded and fully redrawn (fresh smear + split + init, not just weight reinit), up to `max_tries_per_replica` **total tries** (default 30 — one initial fit plus up to 29 redraws). If every try is hopeless the ensemble is abandoned: the replicas accepted so far are exported (that compute is not lost), then a `std::runtime_error` is thrown naming the replica, the try count and how many were exported. A short ensemble returned silently would be read downstream as a complete one, so the run fails loudly instead. Populates `m_replicas` (`std::vector<TrainedModel>`, each carrying its own net + min-max scaling + best val loss).
 7. `export_replicas(out_dir, name_prefix)` — writes each trained replica as `<name_prefix><NN>.json` (same format as `cff_model.json`, via a `net`/scaling-parameterized overload of `export_model_json()`), for out-of-process (Python) mean ± σ CFF bands. **Deletes any pre-existing `<name_prefix>*.json` in `out_dir` first**, so the directory always describes the run that just finished — otherwise a shorter ensemble (10 replicas, then 5) or an aborted one leaves stale files that a `glob` in the plotting code reads as part of the current set. Nothing is deleted when there is nothing to write, so a run that fails before its first replica leaves the previous ensemble intact. See 2026-09-01 and 2026-09-18 session notes.
 
-**`DVCSCFFModuleTorch`** (`Theory/Modules/CFFs/DVCS/`, header-only) — tensor twin of `PARTONS::DVCSConvolCoeffFunctionModule`, added 2026-09-21 to complete the mixin pattern the other two links always had (`DVCSObservableTorch`, `DVCSProcessModuleTorch`). Owns the `AllCFFsTensorBatch` struct and one pure virtual `computeAllCFFsTensorBatch(xi, t, Q2, muF2, muR2)`. Before it existed the process module cross-cast to the **concrete** `DVCSCFFNNTorch`, pinning the tensor chain to one CFF implementation. Sits under the generic `CFFModuleTorch<K>` (`Theory/Modules/CFFs/`), so all three links now have a generic template with a channel class beneath it, as in PARTONS. The signature carries the **CCF kinematics** — the same five quantities `DVCSConvolCoeffFunctionKinematic` holds — because that is what the scalar chain hands its CFF module: the process converts, the CFF module receives. A source parameterized in xB (the network) converts back itself.
+**`DVCSConvolCoeffFunctionModuleTorch`** (`Theory/Modules/CFFs/DVCS/`, header-only) — tensor twin of `PARTONS::DVCSConvolCoeffFunctionModule`, added 2026-09-21 to complete the mixin pattern the other two links always had (`DVCSObservableTorch`, `DVCSProcessModuleTorch`). Owns the `AllCFFsTensorBatch` struct and one pure virtual `computeAllCFFsTensorBatch(xi, t, Q2, muF2, muR2)`. Before it existed the process module cross-cast to the **concrete** `DVCSCFFNNTorch`, pinning the tensor chain to one CFF implementation. Sits under the generic `ConvolCoeffFunctionModuleTorch<K>` (`Theory/Modules/CFFs/`), so all three links now have a generic template with a channel class beneath it, as in PARTONS. The signature carries the **CCF kinematics** — the same five quantities `DVCSConvolCoeffFunctionKinematic` holds — because that is what the scalar chain hands its CFF module: the process converts, the CFF module receives. A source parameterized in xB (the network) converts back itself.
 
-**Scalar CFF modules on the tensor path.** Any scalar `DVCSConvolCoeffFunctionModule` (`DVCSCFFConstant`, `DVCSCFFStandard`, `DVCSCFFDispersionRelation`, …) can be attached to `DVCSProcessBMJ12Torch` with the ordinary `setConvolCoeffFunctionModule()`. When the cross-cast to `DVCSCFFModuleTorch` fails, the process evaluates the module per point through its ordinary `compute()` — `DVCSProcessModuleTorch::scalarCFFsTensorBatch()`, a protected static, so any future torch process gets it too — and packs the four CFFs into `[N]` **no-grad** complex tensors; components the model does not provide stay zero. Nothing is lost, since a parametric model has no parameters in the graph. (This used to need the `DVCSCFFScalarTorch` adapter, removed 2026-10-07.)
+**Scalar CFF modules on the tensor path.** Any scalar `DVCSConvolCoeffFunctionModule` (`DVCSCFFConstant`, `DVCSCFFStandard`, `DVCSCFFDispersionRelation`, …) can be attached to `DVCSProcessBMJ12Torch` with the ordinary `setConvolCoeffFunctionModule()`. When the cross-cast to `DVCSConvolCoeffFunctionModuleTorch` fails, the process evaluates the module per point through its ordinary `compute()` — `DVCSProcessModuleTorch::scalarCFFsTensorBatch()`, a protected static, so any future torch process gets it too — and packs the four CFFs into `[N]` **no-grad** complex tensors; components the model does not provide stay zero. Nothing is lost, since a parametric model has no parameters in the graph. (This used to need the `DVCSCFFScalarTorch` adapter, removed 2026-10-07.)
 
-**`DVCSCFFNNTorch`** (`src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.cpp`) — a PARTONS `DVCSConvolCoeffFunctionModule` **and** a `DVCSCFFModuleTorch` (dual base, like the other links) that wraps `CFFNNModel`. Registered via `BaseObjectRegistry`. Receives kinematics from PARTONS as `(m_xi, m_t, m_Q2)`, converts xB = 2ξ/(1+ξ), applies the training-set min-max scaling carried in via `setModel()`, runs inference, and returns `std::complex<double>` CFF values (scalar, via `computeCFF`) or grad-tracked complex tensors. The tensor side is batched: `computeAllCFFsTensorBatch(xi, t, Q2, muF2, muR2)` (all four CFFs, one NN forward, `[N]` each — what the torch chain calls; it converts xB = 2ξ/(1+ξ) internally and ignores the scales, being scale-blind by construction) and `computeCFFTensorBatch(type, …)`; `computeCFFTensor(type)` survives as an N=1 wrapper because the scalar `computeCFF()` needs it one GPD type at a time.
+**`DVCSCFFNNTorch`** (`src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.cpp`) — a PARTONS `DVCSConvolCoeffFunctionModule` **and** a `DVCSConvolCoeffFunctionModuleTorch` (dual base, like the other links) that wraps `CFFNNModel`. Registered via `BaseObjectRegistry`. Receives kinematics from PARTONS as `(m_xi, m_t, m_Q2)`, converts xB = 2ξ/(1+ξ), applies the training-set min-max scaling carried in via `setModel()`, runs inference, and returns `std::complex<double>` CFF values (scalar, via `computeCFF`) or grad-tracked complex tensors. The tensor side is batched: `computeAllCFFsTensorBatch(xi, t, Q2, muF2, muR2)` (all four CFFs, one NN forward, `[N]` each — what the torch chain calls; it converts xB = 2ξ/(1+ξ) internally and ignores the scales, being scale-blind by construction) and `computeCFFTensorBatch(type, …)`; `computeCFFTensor(type)` survives as an N=1 wrapper because the scalar `computeCFF()` needs it one GPD type at a time.
 
 ### Theory submodule (`src/NNFit/Theory/`, `include/NNFit/Theory/`)
 
@@ -124,19 +124,39 @@ A **fully differentiable** DVCS observable chain that runs *inside* the PARTONS 
 **Chain correspondence** (all base-typed pointers + virtual dispatch, same as scalar):
 
 ```
-ObservableServiceTorch::computeManyKinematicTorch      ↔  ObservableService::computeManyKinematic
-   computeSingleKinematicTorch                         ↔     computeSingleKinematic
-   → ObservableResultTorch<K>  (one bean, [N] tensor)  ↔     → List<ObservableResult> (N beans)
-ObservableTorch::computeTensorBatch (template method)  ↔  Observable::compute
-   computeTensorImplBatch (hook)                       ↔     computeObservable
-   → PhysicalType<torch::Tensor>                       ↔     → PhysicalType<double>
-DVCSAluMinusTorch::aLUTensorBatch (pointwise)          ↔  DVCSAluMinus::computeObservable
-DVCSProcessModuleTorch::crossSectionTensorBatch (Σ)    ↔  DVCSProcessModule::compute(…,VCSSubProcessType)
-   → PhysicalType<torch::Tensor> (GEVm2)               ↔     → PhysicalType<double> (GEVm2)
-   crossSectionBH/VCS/InterfTensorBatch                ↔     CrossSectionBH/VCS/Interf
-   setupKinematicsTorchBatch                           ↔     setKinematics + CFF forward
-DVCSCFFModuleTorch::computeAllCFFsTensorBatch          ↔  DVCSConvolCoeffFunctionModule::computeCFF
+TORCH (tensor path, grad-carrying)                              SCALAR (PARTONS)
+ObservableServiceTorch::computeManyKinematicTorch          ↔  ObservableService::computeManyKinematic
+   computeSingleKinematicTorch                             ↔     computeSingleKinematic
+   → ObservableResultTorch<K>  (one bean, [N] tensor)      ↔     → List<ObservableResult> (N beans)
+ObservableTorch::computeTensorBatch (template method)      ↔  Observable::compute
+   computeTensorImplBatch (hook)                           ↔     computeObservable
+   → PhysicalType<torch::Tensor>                           ↔     → PhysicalType<double>
+DVCSAluMinusSin1PhiTorch::computeTensorImplBatch (moment)  ↔  DVCSAluMinusSin1Phi::computeObservable
+   integrateTorchBatch, fixed GL-40                        ↔     integrate, adaptive DEXP
+DVCSAluMinusTorch::aLUTensorBatch (static, pointwise)      ↔  DVCSAluMinus::computeObservable
+DVCSProcessModuleTorch::prepareTensorBatch                 ↔  DVCSProcessModule::compute — setup half
+   setupKinematicsTorchBatch                               ↔     setKinematics + computeConvolCoeffFunction
+DVCSProcessModuleTorch::crossSectionTensorBatch (Σ)        ↔  DVCSProcessModule::compute(…,VCSSubProcessType)
+   → PhysicalType<torch::Tensor> (GEVm2)                   ↔     → PhysicalType<double> (GEVm2)
+   crossSectionBH/VCS/InterfTensorBatch                    ↔     CrossSectionBH/VCS/Interf
+DVCSConvolCoeffFunctionModuleTorch                         ↔  DVCSConvolCoeffFunctionModule
+   ::computeAllCFFsTensorBatch  (the network)              ↔     ::compute → computeCFF
+   or scalarCFFsTensorBatch  (any scalar CFF module,
+      per-point compute(), no grad)
 ```
+
+**Class hierarchy** — every torch class sits directly under the PARTONS class it mirrors, plus a torch mixin; torch-to-torch reuse goes through calls (statics), never inheritance:
+
+```
+PARTONS::DVCSAluMinus            ← DVCSAluMinusTorch           (+ DVCSObservableTorch)
+  └ PARTONS::DVCSAluMinusSin1Phi ← DVCSAluMinusSin1PhiTorch    (+ DVCSObservableTorch, MathIntegratorModuleTorch)
+                                      calls DVCSAluMinusTorch::aLUTensorBatch
+PARTONS::DVCSProcessBMJ12        ← DVCSProcessBMJ12Torch       (+ DVCSProcessModuleTorch)
+PARTONS::DVCSConvolCoeffFunctionModule
+                                 ← DVCSCFFNNTorch              (+ DVCSConvolCoeffFunctionModuleTorch)
+```
+
+Which physics runs: a torch leaf on `DVCSProcessBMJ12Torch` runs the tensor chain (its scalar `computeObservable` is that chain under `NoGradGuard` + `.item()`); on any other process its scalar path is the PARTONS class above it and its tensor path throws. `DVCSProcessBMJ12Torch` driven by PARTONS runs native BMJ12. Any scalar CFF module can sit under the torch process.
 
 `computeTensor`/`computeTensorImpl` (single-kinematic) survive as thin N=1 wrappers over their `…Batch` siblings — they are an entry-point convenience, not a separate implementation.
 
@@ -1313,3 +1333,14 @@ The adapter existed because the torch process used to accept only a CFF module i
 Nothing lost: the one thing only the adapter could do — present a scalar model as a `DVCSCFFModuleTorch` to code calling `computeAllCFFsTensorBatch()` directly, bypassing the process — had no caller.
 
 **Verified**: the 28 differential tests on the 16-point CLAS 2007 file (temporary runner edit, reverted; no training, so no outputs written) reproduce the adapter-era output **line for line**, 0 of 791 lines differ.
+
+### CFF interface renamed to follow the naming convention
+
+Every torch interface is named after its PARTONS twin plus `Torch` (`ObservableTorch`, `DVCSProcessModuleTorch`, `MathIntegratorModuleTorch`, …) except the CFF link, added 2026-09-21 under shorter names. Renamed:
+
+- `CFFModuleTorch<K>` → **`ConvolCoeffFunctionModuleTorch<K>`** (twin of `ConvolCoeffFunctionModule<K,R>`)
+- `DVCSCFFModuleTorch` → **`DVCSConvolCoeffFunctionModuleTorch`** (twin of `DVCSConvolCoeffFunctionModule`)
+
+Files and include guards renamed with them. The PARTONS name describes the *link*, not the computation — PARTONS itself uses it for modules that convolve nothing (`DVCSCFFConstant`, `DVCSCFFNN`) — so the twin carries it too. The concrete `DVCSCFFNNTorch` keeps its name, which already follows PARTONS' leaf naming (`DVCSCFFNN`). Session notes above keep the old names as written.
+
+The chain-correspondence diagram above was rewritten at the same time: it now shows the moment leaf's integral, the prepare/assemble split, the static pointwise layer, the scalar-CFF route through `scalarCFFsTensorBatch`, and a class-hierarchy diagram reflecting the 2026-10-05 re-parenting.

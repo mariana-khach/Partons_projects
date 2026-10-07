@@ -2,19 +2,19 @@
 // Created by Mariana Khachatryan on 9/21/26.
 //
 
-#ifndef DVCS_CFF_MODULE_TORCH_H
-#define DVCS_CFF_MODULE_TORCH_H
+#ifndef DVCS_CONVOL_COEFF_FUNCTION_MODULE_TORCH_H
+#define DVCS_CONVOL_COEFF_FUNCTION_MODULE_TORCH_H
 
 #include <torch/torch.h>
 
-#include "NNFit/Theory/Modules/CFFs/CFFModuleTorch.h"
+#include "NNFit/Theory/Modules/CFFs/ConvolCoeffFunctionModuleTorch.h"
 
 namespace PARTONS {
 class DVCSObservableKinematic;
 } // namespace PARTONS
 
 /**
- * @class DVCSCFFModuleTorch
+ * @class DVCSConvolCoeffFunctionModuleTorch
  *
  * @brief Tensor twin of PARTONS::DVCSConvolCoeffFunctionModule: the CFF link
  * of the differentiable DVCS chain.
@@ -35,7 +35,7 @@ class DVCSObservableKinematic;
  * interface: the process evaluates it per point, see
  * DVCSProcessModuleTorch::scalarCFFsTensorBatch.)
  *
- * Sits at the channel layer, under the generic CFFModuleTorch<K> -- the same
+ * Sits at the channel layer, under the generic ConvolCoeffFunctionModuleTorch<K> -- the same
  * shape as DVCSProcessModuleTorch under ProcessModuleTorch<K>, and as PARTONS'
  * own DVCSConvolCoeffFunctionModule under ConvolCoeffFunctionModule<K,R>. The
  * channel-specific part (which CFFs exist, and the signature that returns
@@ -58,12 +58,12 @@ class DVCSObservableKinematic;
  * scalar model's values enter as constants and the observable simply comes
  * back detached.
  */
-class DVCSCFFModuleTorch
-        : public CFFModuleTorch<PARTONS::DVCSObservableKinematic> {
+class DVCSConvolCoeffFunctionModuleTorch
+        : public ConvolCoeffFunctionModuleTorch<PARTONS::DVCSObservableKinematic> {
 
 public:
 
-    virtual ~DVCSCFFModuleTorch() = default;
+    virtual ~DVCSConvolCoeffFunctionModuleTorch() = default;
 
     /**
      * The four standard DVCS CFFs at N kinematic points, as [N] complex
@@ -100,4 +100,4 @@ public:
             const torch::Tensor& muF2, const torch::Tensor& muR2) = 0;
 };
 
-#endif /* DVCS_CFF_MODULE_TORCH_H */
+#endif /* DVCS_CONVOL_COEFF_FUNCTION_MODULE_TORCH_H */

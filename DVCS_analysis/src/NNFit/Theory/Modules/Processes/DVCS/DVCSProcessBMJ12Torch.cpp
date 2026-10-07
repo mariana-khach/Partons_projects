@@ -25,7 +25,7 @@
 #include <partons/beans/Scales.h>
 #include <partons/modules/scales/DVCS/DVCSScalesModule.h>
 #include <partons/modules/xi_converter/DVCS/DVCSXiConverterModule.h>
-#include "NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFModuleTorch.h"
+#include "NNFit/Theory/Modules/CFFs/DVCS/DVCSConvolCoeffFunctionModuleTorch.h"
 
 // ---------------------------------------------------------------------------
 // Registration / boilerplate
@@ -524,9 +524,9 @@ void DVCSProcessBMJ12Torch::setupKinematicsTorchBatch(const torch::Tensor& xB,
         throw ElemUtils::CustomException(getClassName(), __func__,
                 "No convol-coeff function module set.");
     }
-    DVCSCFFModuleTorch* pCFF =
-            dynamic_cast<DVCSCFFModuleTorch*>(m_pConvolCoeffFunctionModule);
-    DVCSCFFModuleTorch::AllCFFsTensorBatch cffs = pCFF
+    DVCSConvolCoeffFunctionModuleTorch* pCFF =
+            dynamic_cast<DVCSConvolCoeffFunctionModuleTorch*>(m_pConvolCoeffFunctionModule);
+    DVCSConvolCoeffFunctionModuleTorch::AllCFFsTensorBatch cffs = pCFF
             ? pCFF->computeAllCFFsTensorBatch(xiT, t, Q2, muF2T, muR2T)
             : scalarCFFsTensorBatch(
                     *m_pConvolCoeffFunctionModule, xiT, t, Q2, muF2T, muR2T);

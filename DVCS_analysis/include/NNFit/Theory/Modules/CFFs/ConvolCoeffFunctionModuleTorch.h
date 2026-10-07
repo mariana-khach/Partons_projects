@@ -2,11 +2,11 @@
 // Created by Mariana Khachatryan on 9/21/26.
 //
 
-#ifndef CFF_MODULE_TORCH_H
-#define CFF_MODULE_TORCH_H
+#ifndef CONVOL_COEFF_FUNCTION_MODULE_TORCH_H
+#define CONVOL_COEFF_FUNCTION_MODULE_TORCH_H
 
 /**
- * @class CFFModuleTorch
+ * @class ConvolCoeffFunctionModuleTorch
  *
  * @brief Channel-agnostic base of the CFF link of the tensor chain: twin of
  * PARTONS' ConvolCoeffFunctionModule<KinematicType, ResultType>.
@@ -19,7 +19,7 @@
  *   ProcessModule<K,R>           <->  ProcessModuleTorch<K>
  *     DVCSProcessModule                 DVCSProcessModuleTorch
  *   ConvolCoeffFunctionModule<K,R> <->  this
- *     DVCSConvolCoeffFunctionModule     DVCSCFFModuleTorch
+ *     DVCSConvolCoeffFunctionModule     DVCSConvolCoeffFunctionModuleTorch
  *
  * As with ProcessModuleTorch<K>, this carries no API of its own, and for the
  * same two reasons. First, the lifecycle a PARTONS module needs (clone,
@@ -46,11 +46,11 @@
  * twice.
  */
 template <typename KinematicType>
-class CFFModuleTorch {
+class ConvolCoeffFunctionModuleTorch {
 
 public:
 
-    virtual ~CFFModuleTorch() = default;
+    virtual ~ConvolCoeffFunctionModuleTorch() = default;
 };
 
-#endif /* CFF_MODULE_TORCH_H */
+#endif /* CONVOL_COEFF_FUNCTION_MODULE_TORCH_H */

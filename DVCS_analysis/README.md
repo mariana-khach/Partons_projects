@@ -46,7 +46,7 @@ DVCS_analysis/
 │       └── Theory/         # Differentiable physics layer (libtorch + PARTONS subclasses)
 │           └── Modules/                # PARTONS-registered tensor modules + generic templates
 │               ├── MathIntegratorModuleTorch.cpp
-│               ├── CFFs/DVCS/          # DVCSCFFModuleTorch.h (interface),
+│               ├── CFFs/DVCS/          # DVCSConvolCoeffFunctionModuleTorch.h (interface),
 │               │                       # DVCSCFFNNTorch.cpp
 │               ├── Processes/          # ProcessModuleTorch.h (generic)
 │               │   └── DVCS/           # DVCSProcessModuleTorch.h, DVCSProcessBMJ12Torch.cpp
@@ -661,16 +661,39 @@ batched leaf:
 **Current chain correspondence** (all base-typed pointers + virtual dispatch, as in scalar):
 
 ```
-ObservableServiceTorch::computeManyKinematicTorch      ↔  ObservableService::computeManyKinematic
-   computeSingleKinematicTorch                         ↔     computeSingleKinematic
-ObservableTorch::computeTensorBatch (template method)  ↔  Observable::compute
-   computeTensorImplBatch (hook)                       ↔     computeObservable
-DVCSAluMinusTorch::aLUTensorBatch (pointwise)          ↔  DVCSAluMinus::computeObservable
-DVCSProcessModuleTorch::crossSectionTensorBatch (Σ)    ↔  DVCSProcessModule::compute(…,VCSSubProcessType)
-   crossSectionBH/VCS/InterfTensorBatch                ↔     CrossSectionBH/VCS/Interf
-   setupKinematicsTorchBatch                           ↔     setKinematics + CFF forward
-DVCSCFFNNTorch::computeAllCFFsTensorBatch              ↔  DVCSCFFNNTorch::computeCFF
+TORCH (tensor path, grad-carrying)                              SCALAR (PARTONS)
+ObservableServiceTorch::computeManyKinematicTorch          ↔  ObservableService::computeManyKinematic
+   computeSingleKinematicTorch                             ↔     computeSingleKinematic
+   → ObservableResultTorch<K>  (one bean, [N] tensor)      ↔     → List<ObservableResult> (N beans)
+ObservableTorch::computeTensorBatch (template method)      ↔  Observable::compute
+   computeTensorImplBatch (hook)                           ↔     computeObservable
+   → PhysicalType<torch::Tensor>                           ↔     → PhysicalType<double>
+DVCSAluMinusSin1PhiTorch::computeTensorImplBatch (moment)  ↔  DVCSAluMinusSin1Phi::computeObservable
+   integrateTorchBatch, fixed GL-40                        ↔     integrate, adaptive DEXP
+DVCSAluMinusTorch::aLUTensorBatch (static, pointwise)      ↔  DVCSAluMinus::computeObservable
+DVCSProcessModuleTorch::prepareTensorBatch                 ↔  DVCSProcessModule::compute — setup half
+   setupKinematicsTorchBatch                               ↔     setKinematics + computeConvolCoeffFunction
+DVCSProcessModuleTorch::crossSectionTensorBatch (Σ)        ↔  DVCSProcessModule::compute(…,VCSSubProcessType)
+   → PhysicalType<torch::Tensor> (GEVm2)                   ↔     → PhysicalType<double> (GEVm2)
+   crossSectionBH/VCS/InterfTensorBatch                    ↔     CrossSectionBH/VCS/Interf
+DVCSConvolCoeffFunctionModuleTorch                         ↔  DVCSConvolCoeffFunctionModule
+   ::computeAllCFFsTensorBatch  (the network)              ↔     ::compute → computeCFF
+   or scalarCFFsTensorBatch  (any scalar CFF module,
+      per-point compute(), no grad)
 ```
+
+**Class hierarchy** — every torch class sits directly under the PARTONS class it mirrors, plus a torch mixin; torch-to-torch reuse goes through calls (statics), never inheritance:
+
+```
+PARTONS::DVCSAluMinus            ← DVCSAluMinusTorch           (+ DVCSObservableTorch)
+  └ PARTONS::DVCSAluMinusSin1Phi ← DVCSAluMinusSin1PhiTorch    (+ DVCSObservableTorch, MathIntegratorModuleTorch)
+                                      calls DVCSAluMinusTorch::aLUTensorBatch
+PARTONS::DVCSProcessBMJ12        ← DVCSProcessBMJ12Torch       (+ DVCSProcessModuleTorch)
+PARTONS::DVCSConvolCoeffFunctionModule
+                                 ← DVCSCFFNNTorch              (+ DVCSConvolCoeffFunctionModuleTorch)
+```
+
+Which physics runs: a torch leaf on `DVCSProcessBMJ12Torch` runs the tensor chain (its scalar `computeObservable` is that chain under `NoGradGuard` + `.item()`); on any other process its scalar path is the PARTONS class above it and its tensor path throws. `DVCSProcessBMJ12Torch` driven by PARTONS runs native BMJ12. Any scalar CFF module can sit under the torch process.
 
 `computeTensor` / `computeTensorImpl` (single-kinematic) survive only as thin **N=1 wrappers**
 over their `…Batch` siblings — an entry-point convenience, not a separate implementation.
@@ -756,9 +779,9 @@ The torch chain's bottom link was pinned to a single implementation:
 torch base to cast to.  The 2026-06-16 rework introduced `ObservableTorch<K>` and
 `ProcessModuleTorch<K>` but never the CFF twin, since there was only ever one implementation.
 
-**`DVCSCFFModuleTorch`** fills that gap: a pure mixin owning `AllCFFsTensorBatch` and one pure
+**`DVCSConvolCoeffFunctionModuleTorch`** fills that gap: a pure mixin owning `AllCFFsTensorBatch` and one pure
 virtual `computeAllCFFsTensorBatch(xi, t, Q2, muF2, muR2)`, sitting under a generic
-`CFFModuleTorch<K>` so that every link now has a generic template with a channel class beneath
+`ConvolCoeffFunctionModuleTorch<K>` so that every link now has a generic template with a channel class beneath
 it.  `DVCSCFFNNTorch` derives from it alongside the PARTONS module, so every link pairs a PARTONS
 class (identity, registration, the scalar contract) with a torch base (the tensor interface).
 
@@ -779,7 +802,7 @@ its own.
 
 **Since 2026-10-02 the adapter was optional, and on 2026-10-07 it was removed.**
 `DVCSProcessBMJ12Torch` accepts any PARTONS CFF module directly, exactly as the scalar process
-does: when the attached module does not implement `DVCSCFFModuleTorch`, the process evaluates it
+does: when the attached module does not implement `DVCSConvolCoeffFunctionModuleTorch`, the process evaluates it
 per point through `DVCSProcessModuleTorch::scalarCFFsTensorBatch()` and packs the results into
 no-grad tensors.  Nothing is lost, since a parametric model has no parameters in the graph.
 `observ_calc_scalar_cff()` now attaches `DVCSCFFConstant` directly; its 28 tests reproduce the
