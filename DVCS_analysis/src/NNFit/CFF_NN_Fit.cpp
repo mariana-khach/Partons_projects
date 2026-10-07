@@ -5,7 +5,6 @@
 #include "../../include/NNFit/CFF_NN_Fit.h"
 #include "../../include/NNFit/CustomLoss.h"
 #include "../../include/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.h"
-#include "../../include/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFScalarTorch.h"
 #include <partons/modules/convol_coeff_function/DVCS/DVCSCFFConstant.h>
 #include "../../include/NNFit/Theory/Beans/Obs/DVCS/DVCSObservableResultTorch.h"
 #include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSObservableTorch.h"
@@ -726,16 +725,10 @@ void CFF_NN_Fitter::observ_calc_scalar_cff(unsigned int nativeClassId,
     // ---- Path B: the same model through the tensor chain ------------------
     DVCSConvolCoeffFunctionModule* pCFFScalarB = makeConstantCFFModule();
 
-    // The adapter is a CFF module like any other -- created by the factory,
-    // attached with setConvolCoeffFunctionModule(), found by the same
-    // cross-cast every CFF source goes through. It wraps the scalar model;
-    // the process module hands it CCF kinematics exactly as it would the
-    // network.
-    DVCSConvolCoeffFunctionModule* pCFFAdapter =
-            Partons::getInstance()->getModuleObjectFactory()->newDVCSConvolCoeffFunctionModule(
-                    DVCSCFFScalarTorch::classId);
-    static_cast<DVCSCFFScalarTorch*>(pCFFAdapter)->setScalarModule(pCFFScalarB);
-    pCFFAdapter->setQCDOrderType(PerturbativeQCDOrderType::LO);
+    // Attached directly, exactly as on path A: the torch process accepts any
+    // PARTONS CFF module, evaluating a scalar one per point and packing the
+    // results into no-grad tensors (DVCSProcessModuleTorch::scalarCFFsTensorBatch).
+    // The process hands it CCF kinematics exactly as it would the network.
 
     DVCSXiConverterModule* pXiB =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSXiConverterModule(
@@ -752,7 +745,7 @@ void CFF_NN_Fitter::observ_calc_scalar_cff(unsigned int nativeClassId,
 
     pProcessB->setXiConverterModule(pXiB);
     pProcessB->setScaleModule(pScalesB);
-    pProcessB->setConvolCoeffFunctionModule(pCFFAdapter);
+    pProcessB->setConvolCoeffFunctionModule(pCFFScalarB);
     pObsB->setProcessModule(pProcessB);
 
 

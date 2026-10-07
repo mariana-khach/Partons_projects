@@ -26,7 +26,6 @@
 #include <partons/modules/scales/DVCS/DVCSScalesModule.h>
 #include <partons/modules/xi_converter/DVCS/DVCSXiConverterModule.h>
 #include "NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFModuleTorch.h"
-#include "NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFScalarTorch.h"
 
 // ---------------------------------------------------------------------------
 // Registration / boilerplate
@@ -515,11 +514,11 @@ void DVCSProcessBMJ12Torch::setupKinematicsTorchBatch(const torch::Tensor& xB,
     torch::Tensor muR2T = torch::tensor(muR2Vec, f64opt);
 
     // Any CFF module PARTONS accepts, this accepts -- as the scalar process
-    // does. A module implementing the tensor interface (the trained network,
-    // or DVCSCFFScalarTorch) is asked for tensors directly; that is the path
-    // that carries a gradient. Any other PARTONS CFF module is evaluated per
-    // point through its ordinary scalar compute() and packed into no-grad
-    // tensors -- which loses nothing, since a parametric model has no
+    // does. A module implementing the tensor interface (the trained network)
+    // is asked for tensors directly; that is the path that carries a
+    // gradient. Any other PARTONS CFF module is evaluated per point through
+    // its ordinary scalar compute() (scalarCFFsTensorBatch) and packed into
+    // no-grad tensors -- which loses nothing, since a parametric model has no
     // parameters in the graph to differentiate.
     if (!m_pConvolCoeffFunctionModule) {
         throw ElemUtils::CustomException(getClassName(), __func__,
@@ -529,7 +528,7 @@ void DVCSProcessBMJ12Torch::setupKinematicsTorchBatch(const torch::Tensor& xB,
             dynamic_cast<DVCSCFFModuleTorch*>(m_pConvolCoeffFunctionModule);
     DVCSCFFModuleTorch::AllCFFsTensorBatch cffs = pCFF
             ? pCFF->computeAllCFFsTensorBatch(xiT, t, Q2, muF2T, muR2T)
-            : DVCSCFFScalarTorch::evaluateScalarBatch(
+            : scalarCFFsTensorBatch(
                     *m_pConvolCoeffFunctionModule, xiT, t, Q2, muF2T, muR2T);
     m_CFFstdBatch[0] = cffs.H;
     m_CFFstdBatch[1] = cffs.E;

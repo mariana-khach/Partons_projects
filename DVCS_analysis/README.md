@@ -47,8 +47,7 @@ DVCS_analysis/
 │           └── Modules/                # PARTONS-registered tensor modules + generic templates
 │               ├── MathIntegratorModuleTorch.cpp
 │               ├── CFFs/DVCS/          # DVCSCFFModuleTorch.h (interface),
-│               │                       # DVCSCFFNNTorch.cpp,
-│               │                       # DVCSCFFScalarTorch.cpp (scalar-model adapter)
+│               │                       # DVCSCFFNNTorch.cpp
 │               ├── Processes/          # ProcessModuleTorch.h (generic)
 │               │   └── DVCS/           # DVCSProcessModuleTorch.h, DVCSProcessBMJ12Torch.cpp
 │               ├── Obs/                # ObservableTorch.h (generic)
@@ -778,12 +777,13 @@ converted, so it has only to build the bean and call the model.  It carries the 
 `setConvolCoeffFunctionModule()` like any other CFF module rather than through a wiring path of
 its own.
 
-**Since 2026-10-02 the adapter is optional.**  `DVCSProcessBMJ12Torch` accepts any PARTONS CFF
-module directly, exactly as the scalar process does: when the attached module does not implement
-`DVCSCFFModuleTorch`, the process evaluates it through the adapter's static
-`evaluateScalarBatch()` — the same per-point loop, one implementation — and packs the results
-into no-grad tensors.  Nothing is lost, since a parametric model has no parameters in the graph.
-Verified by running all 28 differential tests both ways: the outputs are identical line for line.
+**Since 2026-10-02 the adapter was optional, and on 2026-10-07 it was removed.**
+`DVCSProcessBMJ12Torch` accepts any PARTONS CFF module directly, exactly as the scalar process
+does: when the attached module does not implement `DVCSCFFModuleTorch`, the process evaluates it
+per point through `DVCSProcessModuleTorch::scalarCFFsTensorBatch()` and packs the results into
+no-grad tensors.  Nothing is lost, since a parametric model has no parameters in the graph.
+`observ_calc_scalar_cff()` now attaches `DVCSCFFConstant` directly; its 28 tests reproduce the
+adapter-era output line for line.
 
 **What it buys** is `observ_calc_scalar_cff()`: fixed CFFs (`DVCSCFFConstant`) pushed through
 PARTONS' native process module *and* through `DVCSProcessBMJ12Torch`, so the two sides share

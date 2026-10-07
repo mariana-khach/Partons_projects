@@ -31,10 +31,9 @@ class DVCSObservableKinematic;
  * DVCSProcessBMJ12Torch::setupKinematicsTorchBatch had to dynamic_cast to the
  * CONCRETE DVCSCFFNNTorch -- pinning the whole tensor chain to one CFF
  * implementation. Casting to this interface instead lets any tensor CFF source
- * drive the chain: a different network, or an adapter over a scalar PARTONS
- * CFF model (DVCSCFFStandard, DVCSCFFDispersionRelation, ...) for validating
- * the batched BMJ12 port against PARTONS' native arithmetic across a whole
- * dataset rather than at a single kinematic point.
+ * drive the chain. (A plain scalar PARTONS CFF module needs no such
+ * interface: the process evaluates it per point, see
+ * DVCSProcessModuleTorch::scalarCFFsTensorBatch.)
  *
  * Sits at the channel layer, under the generic CFFModuleTorch<K> -- the same
  * shape as DVCSProcessModuleTorch under ProcessModuleTorch<K>, and as PARTONS'
@@ -43,11 +42,11 @@ class DVCSObservableKinematic;
  * them) lives here; the generic base is a marker, for the reasons its header
  * gives.
  *
- * The template argument is DVCSObservableKinematic, not the CCF kinematics
- * PARTONS templates its scalar CFF module on: the batched torch path hands the
- * CFF source observable-level kinematics (xB, t, Q2, E) and lets it do any
- * conversion itself -- the network wants xB directly, and DVCSCFFScalarTorch
- * runs the xi-converter and scales modules internally.
+ * The template argument is DVCSObservableKinematic, which only tags the
+ * channel. The kinematics computeAllCFFsTensorBatch() receives are the CCF
+ * quantities (xi, t, Q2, muF2, muR2): the process module converts and the CFF
+ * source receives, exactly as in PARTONS. A source parameterized in xB (the
+ * network) converts back itself.
  *
  * Inherits nothing from PARTONS (pure mixin, like DVCSProcessModuleTorch), so
  * reaching it from a DVCSConvolCoeffFunctionModule* is a cross-cast between

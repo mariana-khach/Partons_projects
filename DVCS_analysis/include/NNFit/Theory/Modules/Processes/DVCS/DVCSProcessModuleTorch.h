@@ -11,8 +11,19 @@
 #include <partons/modules/process/DVCS/DVCSProcessModule.h>
 #include <partons/utils/type/PhysicalType.h>
 #include <partons/utils/type/PhysicalUnit.h>
+#include <partons/beans/convol_coeff_function/DVCS/DVCSConvolCoeffFunctionKinematic.h>
+#include <partons/beans/convol_coeff_function/DVCS/DVCSConvolCoeffFunctionResult.h>
+#include <partons/beans/gpd/GPDType.h>
+#include <partons/beans/List.h>
+#include <partons/modules/convol_coeff_function/DVCS/DVCSConvolCoeffFunctionModule.h>
 #include <torch/torch.h>
 
+#include <complex>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFModuleTorch.h"
 #include "NNFit/Theory/Modules/Processes/ProcessModuleTorch.h"
 
 /**
@@ -36,7 +47,6 @@
  * A tensor observable holds the attached process through this base pointer and
  * dispatches virtually, so any concrete DVCS tensor process is a drop-in.
  */
-class DVCSCFFModuleTorch;
 
 class DVCSProcessModuleTorch
         : public ProcessModuleTorch<PARTONS::DVCSObservableKinematic> {
@@ -180,6 +190,74 @@ protected:
     virtual void setupKinematicsTorchBatch(const torch::Tensor& xB,
             const torch::Tensor& t, const torch::Tensor& Q2,
             const torch::Tensor& E) = 0;
+
+    /**
+     * The CFFs of a SCALAR PARTONS CFF module (DVCSCFFConstant,
+     * DVCSCFFStandard, ...) as tensors: one ordinary compute() per point, all
+     * four CFFs per call, packed into [N] no-grad complex tensors. This is how
+     * a torch process accepts any CFF module PARTONS accepts, as the scalar
+     * process does; a module implementing DVCSCFFModuleTorch is asked for
+     * tensors directly instead. No gradient is lost -- a parametric model has
+     * no parameters in the graph.
+     *
+     * Components the model does not provide come back zero, matching the
+     * network's behaviour for CFFs outside its output layer.
+     * @param xi,t,Q2,muF2,muR2 [N] CCF kinematics, converted by the process.
+     */
+    static DVCSCFFModuleTorch::AllCFFsTensorBatch scalarCFFsTensorBatch(
+            PARTONS::DVCSConvolCoeffFunctionModule& scalarCFF,
+            const torch::Tensor& xi, const torch::Tensor& t,
+            const torch::Tensor& Q2, const torch::Tensor& muF2,
+            const torch::Tensor& muR2) {
+
+        // The four CFFs the BMJ12 tensor layer consumes, in its storage order.
+        const PARTONS::GPDType::Type types[4] = { PARTONS::GPDType::H,
+                PARTONS::GPDType::E, PARTONS::GPDType::Ht, PARTONS::GPDType::Et };
+
+        PARTONS::List<PARTONS::GPDType> gpdTypes;
+        for (int k = 0; k < 4; ++k)
+            gpdTypes.add(PARTONS::GPDType(types[k]));
+
+        const int64_t N = xi.size(0);
+        std::vector<std::vector<double> > re(4, std::vector<double>(N, 0.));
+        std::vector<std::vector<double> > im(4, std::vector<double>(N, 0.));
+
+        for (int64_t i = 0; i < N; ++i) {
+            PARTONS::DVCSConvolCoeffFunctionKinematic ccfKin(xi[i].item<double>(),
+                    t[i].item<double>(), Q2[i].item<double>(),
+                    muF2[i].item<double>(), muR2[i].item<double>());
+
+            PARTONS::DVCSConvolCoeffFunctionResult result =
+                    scalarCFF.compute(ccfKin, gpdTypes);
+
+            // Read through the map rather than getResult(), so a CFF the model
+            // does not provide stays zero instead of throwing.
+            const std::map<PARTONS::GPDType::Type, std::complex<double> >& values =
+                    result.getResultsByGpdType();
+            for (int k = 0; k < 4; ++k) {
+                std::map<PARTONS::GPDType::Type, std::complex<double> >::const_iterator it =
+                        values.find(types[k]);
+                if (it != values.end()) {
+                    re[k][i] = it->second.real();
+                    im[k][i] = it->second.imag();
+                }
+            }
+        }
+
+        const torch::TensorOptions f64 = torch::TensorOptions().dtype(torch::kFloat64);
+        torch::Tensor cff[4];
+        for (int k = 0; k < 4; ++k) {
+            cff[k] = torch::complex(torch::tensor(re[k], f64),
+                    torch::tensor(im[k], f64)); // [N] complex double, no grad
+        }
+
+        DVCSCFFModuleTorch::AllCFFsTensorBatch cffs;
+        cffs.H  = cff[0];
+        cffs.E  = cff[1];
+        cffs.Ht = cff[2];
+        cffs.Et = cff[3];
+        return cffs;
+    }
 
     /// Set by prepareTensorBatch(); gates the assemble-only batched overloads.
     bool m_preparedBatch = false;

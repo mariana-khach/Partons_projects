@@ -35,17 +35,15 @@
  * torch::Tensor. Only KinematicType is templated.
  *
  * Note which kinematics the parameter names. PARTONS' scalar CFF module is
- * templated on the CCF kinematics (xi, t, Q2, muF2, muR2), because the process
- * module converts before calling it. The torch chain defers that conversion to
- * the CFF source instead -- the network wants xB directly, and the scalar
- * adapter runs the xi-converter and scales modules itself -- so what flows
- * through this link is OBSERVABLE-level kinematics, and the channel classes
- * instantiate it accordingly.
+ * templated on the CCF kinematics (xi, t, Q2, muF2, muR2). Here the parameter
+ * only tags the channel, and the channel classes instantiate it with the
+ * observable kinematics; what actually flows through the link is set by the
+ * channel class's compute signature, which carries the CCF quantities, since
+ * the process module converts before calling the CFF source -- as in PARTONS.
  *
  * Inherits nothing from PARTONS, deliberately: a concrete class pairs its
  * PARTONS module with this mixin, so a PARTONS base here would be inherited
- * twice; and an implementation is not required to be a PARTONS module at all
- * (DVCSCFFScalarTorch is not one).
+ * twice.
  */
 template <typename KinematicType>
 class CFFModuleTorch {

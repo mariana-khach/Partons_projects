@@ -89,9 +89,8 @@ public:
 
     // Differential test of the batched BMJ12 port with the network taken out of
     // the picture: fixed CFFs (DVCSCFFConstant) pushed through PARTONS' native
-    // scalar process module and through DVCSProcessBMJ12Torch (via
-    // DVCSCFFScalarTorch), so a disagreement can only come from the two
-    // transcriptions of BMJ12. Scans every point of the dataset. Needs no
+    // scalar process module and through DVCSProcessBMJ12Torch, so a
+    // disagreement can only come from the two transcriptions of BMJ12. Scans every point of the dataset. Needs no
     // trained model.
     //
     // The observable pair is a parameter so any torch leaf can be checked
