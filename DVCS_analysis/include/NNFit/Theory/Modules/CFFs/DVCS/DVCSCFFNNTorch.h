@@ -16,7 +16,7 @@
 #include <vector>
 
 #include "NNFit/CFF_NN_Fit.h"
-#include "NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFModuleTorch.h"
+#include "NNFit/Theory/Modules/CFFs/DVCS/DVCSConvolCoeffFunctionModuleTorch.h"
 
 /**
  * @class DVCSCFFNNTorch
@@ -30,11 +30,11 @@
  * requested GPD type, the corresponding value is set to 0.
  *
  * Dual base, like the other two links of the torch chain: the PARTONS module
- * supplies identity, registration and the scalar contract; DVCSCFFModuleTorch
+ * supplies identity, registration and the scalar contract; DVCSConvolCoeffFunctionModuleTorch
  * supplies the tensor interface the batched chain casts to.
  */
 class DVCSCFFNNTorch : public PARTONS::DVCSConvolCoeffFunctionModule,
-        public DVCSCFFModuleTorch {
+        public DVCSConvolCoeffFunctionModuleTorch {
 
 public:
 
@@ -57,7 +57,7 @@ public:
 
     virtual std::complex<double> computeCFF();
 
-    // AllCFFsTensorBatch is inherited from DVCSCFFModuleTorch. Components the
+    // AllCFFsTensorBatch is inherited from DVCSConvolCoeffFunctionModuleTorch. Components the
     // network does not output (no "Re<name>"/"Im<name>" in the output layer)
     // come back zero.
 
@@ -86,7 +86,7 @@ public:
      * One batched NN forward pass returning all four CFFs as [N] complex
      * tensors with the autograd graph connected to the network parameters.
      *
-     * Receives CCF kinematics like any CFF module (see DVCSCFFModuleTorch) and
+     * Receives CCF kinematics like any CFF module (see DVCSConvolCoeffFunctionModuleTorch) and
      * converts back to the network's own feature, xB = 2*xi / (1 + xi). muF2
      * and muR2 are ignored: the network is scale-blind by construction, its
      * inputs being (xB, t, Q2) -- the long-standing caveat, unchanged here.

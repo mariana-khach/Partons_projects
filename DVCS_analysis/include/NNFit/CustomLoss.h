@@ -67,6 +67,18 @@ public:
      * @param outputLayer  CFF output-neuron names (e.g. {"ImH"}).
      * @param xMin,xMax    Optional per-feature min-max scaling for the NN inputs
      *                     (must match what observ_calc* use). Undefined = raw.
+     * @param observableName PARTONS scalar observable class name, taken from
+     *                     the data file's header (see
+     *                     CFF_NN_Fitter::ObservableData). The tensor leaf that
+     *                     is actually wired is this + "Torch". Required, and
+     *                     deliberately not defaulted: it used to be hardcoded
+     *                     to DVCSAluMinusSin1PhiTorch, so a data file of any
+     *                     other observable was silently fitted with A_LU.
+     * @param processName  PARTONS scalar process class name (e.g.
+     *                     "DVCSProcessBMJ12"); the process wired is its torch
+     *                     twin, this + "Torch", resolved by name. Required for
+     *                     the same reason as observableName: the fitter sets
+     *                     it once, and a default here could silently disagree.
      * @param xPow         Power applied to xB as CFF = xB^xPow * NNet_output
      *                     (must match what observ_calc and predict() use).
      * @param normalize    true (default): return chi^2/n. false: return the
@@ -74,6 +86,8 @@ public:
      *                     for controlled A/B comparisons.
      */
     CustomLossImpl(CFFNNModel net, const std::vector<std::string>& outputLayer,
+            const std::string& observableName,
+            const std::string& processName,
             const torch::Tensor& xMin = {}, const torch::Tensor& xMax = {},
             double xPow = 0.0, bool normalize = true);
 

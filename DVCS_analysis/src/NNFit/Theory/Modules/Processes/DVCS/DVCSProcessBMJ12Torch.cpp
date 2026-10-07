@@ -10,20 +10,12 @@
 
 #include "NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.h"
 
-#include <ElementaryUtils/logger/CustomException.h>
+#include <partons/utils/type/PhysicalUnit.h>
+
 #include <partons/BaseObjectRegistry.h>
 #include <partons/FundamentalPhysicalConstants.h>
 
 #include <cmath>
-
-// Complete type needed as the SOURCE of the cross-cast below:
-// DVCSProcessModule.h only forward-declares DVCSConvolCoeffFunctionModule.
-#include <partons/modules/convol_coeff_function/DVCS/DVCSConvolCoeffFunctionModule.h>
-
-#include <partons/beans/Scales.h>
-#include <partons/modules/scales/DVCS/DVCSScalesModule.h>
-#include <partons/modules/xi_converter/DVCS/DVCSXiConverterModule.h>
-#include "NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFModuleTorch.h"
 
 // ---------------------------------------------------------------------------
 // Registration / boilerplate
@@ -488,44 +480,16 @@ void DVCSProcessBMJ12Torch::setupKinematicsTorchBatch(const torch::Tensor& xB,
                 * (1. + m_epsrootBatch[0] - tQ2 * (1. - 2 * xB - m_epsrootBatch[0]));
     }
 
-    // ----- CFFs as tensors, batched ----------------------------------------
-    // The process module converts, the CFF module receives -- exactly as in
-    // DVCSProcessModule::computeConvolCoeffFunction, which runs the
-    // xi-converter and the scales module and hands the CFF module
-    // (xi, t, Q2, muF2, muR2). Same modules this process is wired with, so the
-    // torch path cannot drift from the scalar path's conventions. N scalar
-    // calls, once per prepare (not per phi node, not per epoch step).
-    const int64_t nPts = xB.size(0);
-    std::vector<double> xiVec(nPts), muF2Vec(nPts), muR2Vec(nPts);
-    for (int64_t i = 0; i < nPts; ++i) {
-        PARTONS::DVCSObservableKinematic kin(xB[i].item<double>(),
-                t[i].item<double>(), Q2[i].item<double>(), E[i].item<double>(),
-                0.); // phi is irrelevant to both modules
-        xiVec[i]   = m_pXiConverterModule->compute(kin).getValue();
-        PARTONS::Scales scale = m_pScaleModule->compute(kin);
-        muF2Vec[i] = scale.getMuF2().getValue();
-        muR2Vec[i] = scale.getMuR2().getValue();
-    }
-    const torch::TensorOptions f64opt = torch::TensorOptions().dtype(torch::kFloat64);
-    torch::Tensor xiT   = torch::tensor(xiVec, f64opt);
-    torch::Tensor muF2T = torch::tensor(muF2Vec, f64opt);
-    torch::Tensor muR2T = torch::tensor(muR2Vec, f64opt);
-
-    // Cross-cast to the tensor interface, not to a concrete module: any CFF
-    // source implementing DVCSCFFModuleTorch can drive this chain -- the
-    // trained network, or DVCSCFFScalarTorch wrapping a scalar PARTONS model.
-    DVCSCFFModuleTorch* pCFF =
-            dynamic_cast<DVCSCFFModuleTorch*>(m_pConvolCoeffFunctionModule);
-    if (!pCFF) {
-        throw ElemUtils::CustomException(getClassName(), __func__,
-                "Tensor path requires a DVCSCFFModuleTorch convol-coeff module.");
-    }
-    DVCSCFFModuleTorch::AllCFFsTensorBatch cffs =
-            pCFF->computeAllCFFsTensorBatch(xiT, t, Q2, muF2T, muR2T);
-    m_CFFstdBatch[0] = cffs.H;
-    m_CFFstdBatch[1] = cffs.E;
-    m_CFFstdBatch[2] = cffs.Ht;
-    m_CFFstdBatch[3] = cffs.Et;
+    // ----- CFFs ---------------------------------------------------------------
+    // Already computed by the base -- prepareTensorBatch() runs the generic
+    // computeConvolCoeffFunctionTensorBatch() before this hook, as PARTONS'
+    // DVCSProcessModule::compute() runs computeConvolCoeffFunction() before a
+    // concrete process's initModule(). BMJ12 only folds them into its own
+    // helicity combinations.
+    m_CFFstdBatch[0] = m_cffsBatch.H;
+    m_CFFstdBatch[1] = m_cffsBatch.E;
+    m_CFFstdBatch[2] = m_cffsBatch.Ht;
+    m_CFFstdBatch[3] = m_cffsBatch.Et;
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 3; j++) {
             m_CFFBatch[i][j] = m_cFBatch[j] * m_CFFstdBatch[i];
@@ -652,7 +616,7 @@ torch::Tensor DVCSProcessBMJ12Torch::S_I0nBatch(unsigned int n, int a, int b) co
 // Batched cross section sigma(lambda, phi), [N,M] (N data points x M phi nodes)
 // ---------------------------------------------------------------------------
 
-torch::Tensor DVCSProcessBMJ12Torch::crossSectionBHTensorBatch(double beamHelicity,
+PARTONS::PhysicalType<torch::Tensor> DVCSProcessBMJ12Torch::crossSectionBHTensorBatch(double beamHelicity,
         double beamCharge, const torch::Tensor& phi) {
 
     (void) beamHelicity;
@@ -674,10 +638,12 @@ torch::Tensor DVCSProcessBMJ12Torch::crossSectionBHTensorBatch(double beamHelici
     torch::Tensor denomConst =
             bc(m_xB2Batch * m_yBMJBatch[1] * m_epsrootBatch[3] * m_tBatch); // [N,1]
     torch::Tensor A_BH = e6 / (denomConst * P1 * P2); // [N,M]
-    return bc(m_phaseSpaceBMJBatch) * A_BH * sqrBH; // [N,M]
+    return PARTONS::PhysicalType<torch::Tensor>(
+            bc(m_phaseSpaceBMJBatch) * A_BH * sqrBH, // [N,M]
+            PARTONS::PhysicalUnit::GEVm2);
 }
 
-torch::Tensor DVCSProcessBMJ12Torch::crossSectionVCSTensorBatch(double beamHelicity,
+PARTONS::PhysicalType<torch::Tensor> DVCSProcessBMJ12Torch::crossSectionVCSTensorBatch(double beamHelicity,
         double beamCharge, const torch::Tensor& phi) {
 
     (void) beamCharge; // VCS is independent of beam charge.
@@ -709,10 +675,12 @@ torch::Tensor DVCSProcessBMJ12Torch::crossSectionVCSTensorBatch(double beamHelic
     torch::Tensor A_VCS = e6 / (m_yBMJBatch[1] * m_Q2Batch); // [N]
     torch::Tensor sqrVCS = bc(cVCS0) * cosn(0) + bc(cVCS1) * cosn(1)
             + bc(cVCS2) * cosn(2) + bc(sVCS1) * sinn(1); // [N,M]
-    return bc(m_phaseSpaceBMJBatch) * bc(A_VCS) * sqrVCS; // [N,M]
+    return PARTONS::PhysicalType<torch::Tensor>(
+            bc(m_phaseSpaceBMJBatch) * bc(A_VCS) * sqrVCS, // [N,M]
+            PARTONS::PhysicalUnit::GEVm2);
 }
 
-torch::Tensor DVCSProcessBMJ12Torch::crossSectionInterfTensorBatch(
+PARTONS::PhysicalType<torch::Tensor> DVCSProcessBMJ12Torch::crossSectionInterfTensorBatch(
         double beamHelicity, double beamCharge, const torch::Tensor& phi) {
 
     auto bc = [](const torch::Tensor& x) { return x.unsqueeze(1); }; // [N] -> [N,1]
@@ -747,5 +715,7 @@ torch::Tensor DVCSProcessBMJ12Torch::crossSectionInterfTensorBatch(
     torch::Tensor sqrI = bc(cI[0]) * cosn(0) + bc(cI[1]) * cosn(1)
             + bc(cI[2]) * cosn(2) + bc(cI[3]) * cosn(3)
             + bc(sI[1]) * sinn(1) + bc(sI[2]) * sinn(2); // [N,M]
-    return bc(m_phaseSpaceBMJBatch) * A_I * sqrI; // [N,M]
+    return PARTONS::PhysicalType<torch::Tensor>(
+            bc(m_phaseSpaceBMJBatch) * A_I * sqrI, // [N,M]
+            PARTONS::PhysicalUnit::GEVm2);
 }

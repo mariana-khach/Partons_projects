@@ -66,6 +66,39 @@ protected:
      * @param nNodes For fixed-rule quadratures (TRAPEZOIDAL, GL): number of nodes
      *               to use (calls QuadratureIntegrator1D::setN). Ignored (0) for
      *               adaptive rules (DEXP); throws if > 0 for a non-quadrature rule.
+     *
+     * ⚠️ GL: 20 and 40 are PRIVILEGED ORDERS. Read before picking anything else.
+     *
+     * NumA's GaussLegendreIntegrator1D hardcodes 16-digit node/weight tables for
+     * N = 20 and N = 40 only; every other order falls through to its
+     * "Compute roots and weights if not prestored" Newton solver, whose WEIGHTS
+     * are ~100x worse. Measured 2026-09-23 against a Golub-Welsch reference:
+     *
+     *   N=40, tabulated     max|dweight| 1.25e-15     sum(w)-2 exactly 0
+     *   N=80/160/320, Newton             ~1e-13                ~1e-12
+     *
+     * The nodes are fine either way (~1e-16). The weights are not, and the
+     * computed rule does not even integrate a constant exactly.
+     *
+     * The cause is a real defect in that solver, not a precision limit. It
+     * computes pp = P'_N(z), THEN takes the Newton step z = z - p1/pp, then
+     * exits on |dz| <= EPS = 1e-12 -- and stores 2/((1-z^2)*pp*pp), pairing the
+     * final node with a derivative evaluated up to 1e-12 away. Since
+     * w ~ 1/P'_N(z)^2, a displacement dz costs 2*(P''/P')*dz, and at a Legendre
+     * root the ODE gives P''/P' = 2z/(1-z^2), which is O(N^2) at the outermost
+     * nodes. Re-evaluating P'_N at the converged node, or tightening EPS to
+     * 1e-15, each recovers the full ~100x (verified in both directions).
+     *
+     * CONSEQUENCE for choosing an order: leaving 20 or 40 is a STEP change in
+     * rule quality, not a gradual one, so a higher order can easily agree with
+     * the scalar path WORSE than GL-40 did. Always re-measure after changing
+     * it, per integrand -- see the DVCSCrossSection*PhiIntegratedTorch
+     * constructors, where the three leaves landed on different answers.
+     *
+     * Fixable on our side if it ever matters: we only READ NumA's getNodes()/
+     * getWeights() here, so supplying corrected weights for N outside {20, 40}
+     * would recover the 100x. Not done -- it sharpens the differential test but
+     * changes no physics.
      */
     void setIntegrator(NumA::IntegratorType1D::Type integratorType,
             unsigned int nNodes = 0);

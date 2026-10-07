@@ -67,38 +67,55 @@ This is the active development area. It implements a differentiable pipeline:
 3. `observ_calc()` — base-PARTONS scalar reference: `DVCSCFFNNTorch` + base `DVCSProcessBMJ12` + base `DVCSAluMinusSin1Phi` via `DVCSObservableService`.
 4. `observ_calc_torch()` — same observable through the PARTONS-tensor chain via `DVCSObservableServiceTorch::computeSingleKinematicTorch` → `computeTensor()`, inside the libtorch autograd graph.
 5. `observ_calc_torch_scalar()` — the `*Torch` subclasses driven through the standard `DVCSObservableService`; the inherited scalar virtuals wrap the tensor methods under `NoGradGuard`+`.item()` (verification path — same torch physics, gradient dropped).
-5b. `observ_calc_scalar_cff()` — differential test of the **BMJ12 transcription itself**, with the network out of the picture: fixed CFFs (`DVCSCFFConstant`) are pushed through PARTONS' native scalar process module and, via `DVCSCFFScalarTorch`, through `DVCSProcessBMJ12Torch`. The two sides then share nothing but four constant numbers, so any disagreement is in the arithmetic. Scans **every point of the dataset**, and drives the torch side through `computeManyKinematicTorch` — so it is also the only check that exercises the batched `[N,M]` path with N>1 (everything else runs at N=1, where a broadcasting mistake cannot show). Prints a per-point table plus max absolute/relative deviation. Needs no trained model. See 2026-09-21 session notes.
+5b. `observ_calc_scalar_cff()` — differential test of the **BMJ12 transcription itself**, with the network out of the picture: fixed CFFs (`DVCSCFFConstant`) are pushed through PARTONS' native scalar process module and, attached directly, through `DVCSProcessBMJ12Torch`. The two sides then share nothing but four constant numbers, so any disagreement is in the arithmetic. Scans **every point of the dataset**, and drives the torch side through `computeManyKinematicTorch` — so it is also the only check that exercises the batched `[N,M]` path with N>1 (everything else runs at N=1, where a broadcasting mistake cannot show). Prints a per-point table plus max absolute/relative deviation. Needs no trained model. ⚠️ **The 28 calls in `Run_CFF_NN_Fit.cpp` are guarded off** behind `const bool runBMJ12DifferentialTests = false` (2026-09-24): the NATIVE side loops per data point, since PARTONS has no batched entry point that keeps per-point values, so the cost scales with the *fit's* data file — ~4 s on 16 points, but 28 × 3008 ≈ 84 000 scalar evaluations (most with adaptive DEXP) on the CLAS 2018 set. **Turn it back on after any change to `DVCSProcessBMJ12Torch`, to a leaf's formula, or when adding an observable**, and point the fitter at a small file while doing so. It is the ONLY thing linking the two independent BMJ12 transcriptions, so it is a regression test, not a one-time validation. `spread_phi = true` replaces the data file's φ column with an even sweep of [0, 2π): every row of the current file carries the **same** φ, so a pointwise leaf scanned over the dataset is otherwise tested at exactly one angle, and a formula wrong elsewhere in φ passes (added 2026-09-22 when checking A_C). It is a no-op for a moment leaf, which ignores the stored φ. ⚠️ **It reports the MAX over the dataset, and that statistic can hide a real problem** — on the cross sections it sat at 2.4848e-04 from GL-40 to GL-640, pinned by one point where the *scalar* integrator is the outlier, while another point was still converging underneath it. Read the per-point column when choosing a quadrature order. See the 2026-09-21 and 2026-09-23 session notes.
 6. `train_replicas(n_replicas, …)` — trains a Monte Carlo replica ensemble for a CFF uncertainty band: each replica independently fits Monte-Carlo-smeared pseudodata (`y_smeared = y_obs + N(0, sigma)`), with a fresh train/val split, fresh weight init, and fresh optimizer per replica, via the shared `fit_once()` helper (also used internally by `train_nn()` for the unsmeared central fit). A replica whose validation loss diverges (NaN/Inf) or stays above a "hopeless" reduced-χ²/n threshold at a periodic checkpoint epoch is discarded and fully redrawn (fresh smear + split + init, not just weight reinit), up to `max_tries_per_replica` **total tries** (default 30 — one initial fit plus up to 29 redraws). If every try is hopeless the ensemble is abandoned: the replicas accepted so far are exported (that compute is not lost), then a `std::runtime_error` is thrown naming the replica, the try count and how many were exported. A short ensemble returned silently would be read downstream as a complete one, so the run fails loudly instead. Populates `m_replicas` (`std::vector<TrainedModel>`, each carrying its own net + min-max scaling + best val loss).
 7. `export_replicas(out_dir, name_prefix)` — writes each trained replica as `<name_prefix><NN>.json` (same format as `cff_model.json`, via a `net`/scaling-parameterized overload of `export_model_json()`), for out-of-process (Python) mean ± σ CFF bands. **Deletes any pre-existing `<name_prefix>*.json` in `out_dir` first**, so the directory always describes the run that just finished — otherwise a shorter ensemble (10 replicas, then 5) or an aborted one leaves stale files that a `glob` in the plotting code reads as part of the current set. Nothing is deleted when there is nothing to write, so a run that fails before its first replica leaves the previous ensemble intact. See 2026-09-01 and 2026-09-18 session notes.
 
-**`DVCSCFFModuleTorch`** (`Theory/Modules/CFFs/DVCS/`, header-only) — tensor twin of `PARTONS::DVCSConvolCoeffFunctionModule`, added 2026-09-21 to complete the mixin pattern the other two links always had (`DVCSObservableTorch`, `DVCSProcessModuleTorch`). Owns the `AllCFFsTensorBatch` struct and one pure virtual `computeAllCFFsTensorBatch(xi, t, Q2, muF2, muR2)`. Before it existed the process module cross-cast to the **concrete** `DVCSCFFNNTorch`, pinning the tensor chain to one CFF implementation. Sits under the generic `CFFModuleTorch<K>` (`Theory/Modules/CFFs/`), so all three links now have a generic template with a channel class beneath it, as in PARTONS. The signature carries the **CCF kinematics** — the same five quantities `DVCSConvolCoeffFunctionKinematic` holds — because that is what the scalar chain hands its CFF module: the process converts, the CFF module receives. A source parameterized in xB (the network) converts back itself.
+**`DVCSConvolCoeffFunctionModuleTorch`** (`Theory/Modules/CFFs/DVCS/`, header-only) — tensor twin of `PARTONS::DVCSConvolCoeffFunctionModule`, added 2026-09-21 to complete the mixin pattern the other two links always had (`DVCSObservableTorch`, `DVCSProcessModuleTorch`). Owns the `AllCFFsTensorBatch` struct and one pure virtual `computeAllCFFsTensorBatch(xi, t, Q2, muF2, muR2)`. Before it existed the process module cross-cast to the **concrete** `DVCSCFFNNTorch`, pinning the tensor chain to one CFF implementation. Sits under the generic `ConvolCoeffFunctionModuleTorch<K>` (`Theory/Modules/CFFs/`), so all three links now have a generic template with a channel class beneath it, as in PARTONS. The signature carries the **CCF kinematics** — the same five quantities `DVCSConvolCoeffFunctionKinematic` holds — because that is what the scalar chain hands its CFF module: the process converts, the CFF module receives. A source parameterized in xB (the network) converts back itself.
 
-**`DVCSCFFScalarTorch`** (`Theory/Modules/CFFs/DVCS/`) — presents any scalar `DVCSConvolCoeffFunctionModule` (`DVCSCFFConstant`, `DVCSCFFStandard`, `DVCSCFFDispersionRelation`, …) as a `DVCSCFFModuleTorch`, evaluating it per point and packing the results into `[N]` **no-grad** complex tensors. Since the process module now hands down CCF kinematics, the adapter has nothing to convert — it builds the bean it is given and calls the wrapped model. **Dual base like `DVCSCFFNNTorch`** (PARTONS module + torch mixin), so it is wired the ordinary way — `setConvolCoeffFunctionModule()`, found by the same single cross-cast — rather than through an injection path of its own; its scalar `computeCFF()` delegates to the wrapped model, so it behaves like what it wraps if PARTONS drives it. The wrapped module is attached with `setScalarModule()` after construction, since factory-created modules cannot take constructor arguments. Non-owning.
+**Scalar CFF modules on the tensor path.** Any scalar `DVCSConvolCoeffFunctionModule` (`DVCSCFFConstant`, `DVCSCFFStandard`, `DVCSCFFDispersionRelation`, …) can be attached to `DVCSProcessBMJ12Torch` with the ordinary `setConvolCoeffFunctionModule()`. When the cross-cast to `DVCSConvolCoeffFunctionModuleTorch` fails, the process evaluates the module per point through its ordinary `compute()` — `DVCSProcessModuleTorch::scalarCFFsTensorBatch()`, a protected static, so any future torch process gets it too — and packs the four CFFs into `[N]` **no-grad** complex tensors; components the model does not provide stay zero. Nothing is lost, since a parametric model has no parameters in the graph. (This used to need the `DVCSCFFScalarTorch` adapter, removed 2026-10-07.)
 
-**`DVCSCFFNNTorch`** (`src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.cpp`) — a PARTONS `DVCSConvolCoeffFunctionModule` **and** a `DVCSCFFModuleTorch` (dual base, like the other links) that wraps `CFFNNModel`. Registered via `BaseObjectRegistry`. Receives kinematics from PARTONS as `(m_xi, m_t, m_Q2)`, converts xB = 2ξ/(1+ξ), applies the training-set min-max scaling carried in via `setModel()`, runs inference, and returns `std::complex<double>` CFF values (scalar, via `computeCFF`) or grad-tracked complex tensors. The tensor side is batched: `computeAllCFFsTensorBatch(xi, t, Q2, muF2, muR2)` (all four CFFs, one NN forward, `[N]` each — what the torch chain calls; it converts xB = 2ξ/(1+ξ) internally and ignores the scales, being scale-blind by construction) and `computeCFFTensorBatch(type, …)`; `computeCFFTensor(type)` survives as an N=1 wrapper because the scalar `computeCFF()` needs it one GPD type at a time.
+**`DVCSCFFNNTorch`** (`src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.cpp`) — a PARTONS `DVCSConvolCoeffFunctionModule` **and** a `DVCSConvolCoeffFunctionModuleTorch` (dual base, like the other links) that wraps `CFFNNModel`. Registered via `BaseObjectRegistry`. Receives kinematics from PARTONS as `(m_xi, m_t, m_Q2)`, converts xB = 2ξ/(1+ξ), applies the training-set min-max scaling carried in via `setModel()`, runs inference, and returns `std::complex<double>` CFF values (scalar, via `computeCFF`) or grad-tracked complex tensors. The tensor side is batched: `computeAllCFFsTensorBatch(xi, t, Q2, muF2, muR2)` (all four CFFs, one NN forward, `[N]` each — what the torch chain calls; it converts xB = 2ξ/(1+ξ) internally and ignores the scales, being scale-blind by construction) and `computeCFFTensorBatch(type, …)`; `computeCFFTensor(type)` survives as an N=1 wrapper because the scalar `computeCFF()` needs it one GPD type at a time.
 
 ### Theory submodule (`src/NNFit/Theory/`, `include/NNFit/Theory/`)
 
 A **fully differentiable** DVCS observable chain that runs *inside* the PARTONS module framework (not bypassing it). The design goal is a tensor chain **structurally identical, link-for-link, to PARTONS' scalar chain**: every scalar link has a torch twin with the same role, so gradients (∂A_LU/∂NN-weights) flow end-to-end while the same classes remain drop-in for the scalar pipeline. This enables training directly on observable data.
 
-**Generic, channel-agnostic templates** (`Theory/Modules/…`, header-only — tensor twins of PARTONS' `Observable<K,R>` / `ProcessModule<K,R>` / `ObservableService<K,R>`; the `ResultType` parameter collapses to `torch::Tensor`, so only `KinematicType` is templated):
+**Generic, channel-agnostic templates** (`Theory/Modules/…`, header-only — tensor twins of PARTONS' `Observable<K,R>` / `ProcessModule<K,R>` / `ObservableService<K,R>`; the `ResultType` parameter collapses to `ObservableResultTorch<K>`, so only `KinematicType` is templated):
 
 - **`ObservableTorch<K>`** (`Modules/Obs/ObservableTorch.h`) — NVI idiom mirroring scalar `compute`/`computeObservable`: public template method `computeTensor()` delegates to the protected pure-virtual hook `computeTensorImpl()`.
 - **`ProcessModuleTorch<K>`** (`Modules/Processes/ProcessModuleTorch.h`) — channel-agnostic skeleton; no cross-section API (that's channel-specific, as in scalar).
-- **`ObservableServiceTorch<K>`** (`Modules/Services/ObservableServiceTorch.h`) — generic driver `computeSingleKinematicTorch(kin, ObservableTorch<K>*)` returning the live tensor (no detach). A **mixin**, not a base, since it's layered onto the existing PARTONS service.
+- **`ObservableServiceTorch<K>`** (`Modules/Services/ObservableServiceTorch.h`) — generic driver `computeSingleKinematicTorch(kin, ObservableTorch<K>*)` / `computeManyKinematicTorch(List<K>, …)`, both returning an `ObservableResultTorch<K>` whose tensor is live (no detach). A **mixin**, not a base, since it's layered onto the existing PARTONS service.
+- **`ObservableResultTorch<K>`** (`Theory/Beans/Obs/`, header-only; DVCS alias `DVCSObservableResultTorch` in `Beans/Obs/DVCS/`) — the result bean: `PhysicalType<torch::Tensor>` (value **and unit**) + the `List<K>` it was evaluated at + the module name. A **sibling** of PARTONS' `ObservableResult`, not an instantiation of it: that class's payload is a hardcoded `PhysicalType<double>` with no template parameter for the value type, and its base `Result<K>` holds a *singular* kinematic and needs `operator<` and a `const toString()` that `List<K>` does not provide. One bean per **batch**, where the scalar `computeManyKinematic` returns `List<ObservableResult>`, one per point. Deliberately omits `Result<K>`'s channel type and result-info fields — they exist for PARTONS' database/report serialization and nothing on the tensor path reads them. `getTensor()` returns **by value**: `PhysicalType::getValue()` does too, so a reference would dangle, and with a refcounted handle that corrupts the heap rather than merely reading garbage.
 
 **DVCS channel layer** (`Theory/Modules/…/DVCS/`):
 
 - **`DVCSObservableTorch`** = `ObservableTorch<DVCSObservableKinematic>` (alias).
-- **`DVCSProcessModuleTorch`** — tensor twin of `DVCSProcessModule`. **Batched API only** (the single-kinematic path was deleted 2026-09-16 — see that session's notes). Declares the three sub-process atoms `crossSectionBHTensorBatch`/`crossSectionVCSTensorBatch`/`crossSectionInterfTensorBatch` (pure virtual, siblings of `CrossSectionBH/VCS/Interf`), each `[N,M]` (N data points × M φ nodes). The cross-section call is split **prepare + assemble**: public `prepareTensorBatch(xB, t, Q2, E)` runs the φ-/helicity-independent `setupKinematicsTorchBatch` once (and sets the `m_preparedBatch` guard); the **lightweight** `crossSectionTensorBatch(λ, charge, φ, VCSSubProcessType=ALL)` overloads assume prepare ran and only sum the selected sub-processes (mirroring `DVCSProcessModule::compute = Σ CrossSection*`). `setupKinematicsTorchBatch` is the protected setup hook. Callers must call prepare immediately before assemble for their own kinematics; the guard only catches "never prepared at all," not a mismatched prepare.
+- **`DVCSProcessModuleTorch`** — tensor twin of `DVCSProcessModule`. **Batched API only** (the single-kinematic path was deleted 2026-09-16 — see that session's notes). Declares the three sub-process atoms `crossSectionBHTensorBatch`/`crossSectionVCSTensorBatch`/`crossSectionInterfTensorBatch` (pure virtual, siblings of `CrossSectionBH/VCS/Interf`), each `[N,M]` (N data points × M φ nodes). The cross-section call is split **prepare + assemble**: public `prepareTensorBatch(xB, t, Q2, E)` runs the φ-/helicity-independent setup once, in PARTONS' order: first the generic `computeConvolCoeffFunctionTensorBatch` (twin of `DVCSProcessModule::computeConvolCoeffFunction` — xi-converter and scales via PARTONS' public getters, then the CFF module's tensor interface or `scalarCFFsTensorBatch`), storing the result in `m_cffsBatch` (twin of `m_dvcsConvolCoeffFunctionResult`); then the concrete process's `setupKinematicsTorchBatch` (twin of a concrete process's `initModule`), which reads it; then it sets the `m_preparedBatch` guard (generic CFF step moved here from `DVCSProcessBMJ12Torch` on 2026-10-07); the **assemble-only** `crossSectionTensorBatch(λ, charge, φ, VCSSubProcessType=ALL)` overloads assume prepare ran and only sum the selected sub-processes (mirroring `DVCSProcessModule::compute = Σ CrossSection*`). These notes used to call the assemble "lightweight"; **measured 2026-09-22 it is not** — at N=16, M=40 on the NN chain, prepare 2.49–2.68 ms vs one assemble 2.27–2.56 ms, a ratio of 1.05–1.12. Parity is what makes the split pay: dropping it costs **+34–36%** per A_LU evaluation (2 cross sections per prepare) and **+62–65%** for A_C (4). Process-layer figures only — an epoch also pays the integrand, the χ² and `backward()`, so the end-to-end training penalty is smaller and was not measured. `setupKinematicsTorchBatch` is the protected setup hook. Callers must call prepare immediately before assemble for their own kinematics; the guard only catches "never prepared at all," not a mismatched prepare.
 - **`DVCSObservableServiceTorch`** (`Modules/Services/DVCS/`) — `public PARTONS::DVCSObservableService, public ObservableServiceTorch<DVCSObservableKinematic>`. Inheriting the scalar service puts it on the `ServiceObject` branch (registrable, retrievable, full scalar machinery reused); the mixin adds the tensor driver. Self-registers via `BaseObjectRegistry`; fetched by name through `ServiceObjectRegistry::get("DVCSObservableServiceTorch")`.
 
 **Per-class-parallel observable leaves** (mirror scalar `DVCSAluMinus` → `DVCSAluMinusSin1Phi`):
 
-- **`DVCSAluMinusTorch`** (`Modules/Obs/DVCS/`) — `public PARTONS::DVCSAluMinus, public DVCSObservableTorch`. Owns the reusable pointwise asymmetry `aLUTensorBatch(xB, t, Q2, E, φ[M]) = (σ⁺−σ⁻)/(σ⁺+σ⁻)`, `[N,M]` (cross-casts `m_pProcessModule` to `DVCSProcessModuleTorch*`). It calls `prepareTensorBatch` **once**, then the lightweight `crossSectionTensorBatch(±1, −1, φ)` per helicity — so the helicity-independent setup (NN forward + BMJ12 kinematics + 72 coeffs) runs once per batch instead of twice. ⚠️ Its own leaf hooks are **not implemented**: `computeTensorImplBatch` throws (a real pointwise version needs an own-φ `[N]` broadcast — see the 2026-09-15 open task), and `computeTensorImpl` is a thin N=1 wrapper over it, so it throws too. Consequently the inherited scalar `computeObservable` (which wraps `computeTensor().item()`) also throws for a **bare** `DVCSAluMinusTorch` — only its moment subclasses are usable. Nothing instantiates it today.
-- **`DVCSAluMinusSin1PhiTorch`** — `public DVCSAluMinusTorch, public MathIntegratorModuleTorch`. The only observable leaf actually wired anywhere. `computeTensorImplBatch` = the sin(1φ) Fourier moment of the inherited `aLUTensorBatch` via `integrateTorchBatch` (fixed **GL-20** — raised from 10 on 2026-09-21 after the dataset scan measured GL-10 at up to 4.2e-4 relative against the scalar DEXP path; see that session's notes); `computeTensorImpl` is a thin N=1 wrapper around it (wraps the single kinematic into a one-element `List<K>`). No diamond (single path to `PARTONS::DVCSAluMinus`; the integrator is a pure mixin). A future `DVCSAluMinusCos0PhiTorch` derives the same way and reuses `aLUTensorBatch`.
+- **`DVCSAluMinusTorch`** (`Modules/Obs/DVCS/`) — `public PARTONS::DVCSAluMinus, public DVCSObservableTorch`. Owns the reusable pointwise asymmetry `aLUTensorBatch(xB, t, Q2, E, φ[M]) = (σ⁺−σ⁻)/(σ⁺+σ⁻)`, `[N,M]` (cross-casts `m_pProcessModule` to `DVCSProcessModuleTorch*`). It calls `prepareTensorBatch` **once**, then the assemble-only `crossSectionTensorBatch(±1, −1, φ)` per helicity — so the helicity-independent setup (NN forward + BMJ12 kinematics + 72 coeffs) runs once per batch instead of twice. Its leaf hooks **are implemented** as of 2026-09-22: `computeTensorImplBatch` evaluates the pointwise A_LU(φ) at each kinematic's **own** φ, by passing φ as `[N,1]` instead of the moment leaves' shared `[M]` grid — the assembly broadcasts either shape, so no new machinery was needed. `computeTensorImpl` is the usual N=1 wrapper, and the inherited scalar `computeObservable` therefore works too. A bare `DVCSAluMinusTorch` is now a usable observable.
+- **The A_LU family — nine leaves, complete as of 2026-09-22.** Four **pointwise** variants, each a sibling (not a subclass: an AluPlus is not an AluMinus, so each must be its own PARTONS observable) — `DVCSAluMinusTorch`, `DVCSAluPlusTorch`, `DVCSAluDVCSTorch`, `DVCSAluIntTorch`. They differ only in their `asymmetryTensorBatch()` override, because the PARTONS variants differ by **charge combination**, not by sub-process selector. Writing σ(λ, charge): AluMinus `(s+- − s--)/(s+- + s--)`; AluPlus `(s++ − s-+)/(s++ + s-+)`; AluDVCS `((s+++s+-) − (s-++s--))/((s+++s+-) + (s-++s--))`; AluInt `((s++−s+-) − (s-+−s--))/((s+++s+-) + (s-++s--))`. The charge **sum** cancels the interference term (odd in charge), leaving BH+VCS; the charge **difference** isolates it. Five **Fourier-moment** leaves — `…Sin1PhiTorch`/`…Sin2PhiTorch` — each derive from their PARTONS moment class and copy its weight and `1/π` normalization exactly.
 
-**`DVCSProcessBMJ12Torch`** (`Modules/Processes/DVCS/`) — `public PARTONS::DVCSProcessBMJ12, public DVCSProcessModuleTorch`. Overrides the three batched sub-process atoms (BMJ12 in `float64` tensors; kinematics as no-grad `[N]` tensors, CFF-bilinear/linear layers in-graph) + `setupKinematicsTorchBatch` (φ-independent BMJ12 quantities, 72 angular coeffs, one batched NN forward caching the CFF tensors). Unpolarized target only.
+- **The A_C family — five leaves, complete as of 2026-09-22.** `DVCSAcTorch` (pointwise) plus `DVCSAcCos0PhiTorch` (weight 1, ÷2π) and `DVCSAcCos1/2/3PhiTorch` (weight cos(nφ), ÷π), matching PARTONS exactly. A_C is the **transpose of A_LU^DVCS**: it sums over beam *helicity* at each charge and then differences the *charge*, where AluDVCS sums over charge and differences helicity. Writing σ(λ, charge): `((s+++s-+) − (s+-+s--)) / ((s+++s-+) + (s+-+s--))`. Since the interference term is odd in beam charge while BH and VCS are even, this reduces to Ī / (BH̄ + VCS̄) — the interference isolated against the BH+DVCS background, which is why its moments are **cosine** moments (Re CFFs) where A_LU's are sine moments (Im CFFs).
+
+- **The cross-section family — eight leaves, complete as of 2026-09-23.** Five pointwise — `DVCSCrossSectionUUMinusTorch`, `…DifferenceLUMinusTorch`, `…UUBHSubProcTorch`, `…UUDVCSSubProcTorch`, `…UUVirtualPhotoProductionTorch` — plus three `…PhiIntegratedTorch`, each deriving from its PARTONS φ-integrated class and integrating its pointwise torch sibling's static cross section. All five share one skeleton, differing only in a sign and a `VCSSubProcessType`:  ½[σ(λ=+1) ± σ(λ=−1)] · 2π · C, at beam charge −1 with an unpolarized target. The `/2` is a genuine **average** (unpolarized beam) where an asymmetry divides by the *sum*; the 2π integrates out the transversely-polarized-target azimuth. `DifferenceLUMinus` is the odd one out — helicity-**odd**, so not an unpolarized cross section despite the family name.
+
+  **These are the first dimensionful observables in the chain.** The process module works in GeV⁻² and every PARTONS cross-section class converts with `makeSameUnitAs(PhysicalUnit::NB)`; the torch chain carries **no unit system**, so the conversion is explicit (`Constant::CONV_GEVm2_TO_NBARN`) and the scalar wrapper tags its result `NB`. `DVCSCrossSectionTotal` is deliberately **not** ported — a GSL VEGAS Monte Carlo over (y, Q², t) that calls back into the scalar observable, which is not a tensor-chain shape.
+
+- **`DVCSAluMinusSin1PhiTorch`** — `public PARTONS::DVCSAluMinusSin1Phi, public DVCSObservableTorch, public MathIntegratorModuleTorch`, the template every other moment leaf follows (re-parented 2026-10-05; until then it derived from `DVCSAluMinusTorch`). `computeTensorImplBatch` = the sin(1φ) Fourier moment of `DVCSAluMinusTorch::aLUTensorBatch` via `integrateTorchBatch` (fixed **GL-40** — 10 → 20 on 2026-09-21, 20 → 40 on 2026-09-22; see those notes); `computeTensorImpl` is a thin N=1 wrapper around it. The pointwise layer is reused by **calling a static**, not by inheriting the torch pointwise class: that class derives from `PARTONS::DVCSAluMinus`, and so does `PARTONS::DVCSAluMinusSin1Phi`, so inheriting both would give the leaf two `DVCSAluMinus` subobjects (PARTONS uses no virtual inheritance). Every pointwise layer — `aLUTensorBatch`, `aCTensorBatch`, `crossSectionNbTensorBatch`, and the `asymmetryTensorBatch` formulas — is therefore a public/protected **static** taking the prepared `DVCSProcessModuleTorch&`. Every other moment leaf derives the same way from its own PARTONS moment class and calls its pointwise parent's static.
+
+⚠️ **Choosing a GL order — three things that have each bitten once.**
+
+1. **It is per-integrand, not universal.** At GL-20, sin(1φ) moments landed at ~1e-8 relative against native PARTONS but **sin(2φ) at ~5e-7** — ~40× looser, the higher harmonic being less well resolved at a given order. The A_LU/A_C leaves therefore use **GL-40**. But `DVCSCrossSectionUUMinusPhiIntegratedTorch` integrates the **full cross section**, which carries the Bethe-Heitler peak at the interval ends (measured: ~5900× the value at φ=π, and 99.3% BH), and needs **GL-160** — while its two sub-process siblings, with no BH term and so no peak, are best at GL-40. Three leaves in one family, three different answers. Always re-measure.
+
+2. **20 and 40 are privileged orders in NumA.** `GaussLegendreIntegrator1D` hardcodes 16-digit tables for N = 20 and N = 40 **only**; every other order uses its Newton solver, whose **weights are ~100× worse** (N=40 tabulated: max |Δw| 1.25e-15, Σw−2 exactly 0; N=80/160/320 computed: ~1e-13 and ~1e-12). The cause is a defect, not a precision limit — the solver stores `2/((1-z²)·pp·pp)` pairing the final node with `pp = P'_N` evaluated one Newton step earlier, up to `EPS = 1e-12` away, and `w ~ 1/P'_N²` amplifies that by `2(P''/P') = 4z/(1-z²)` = O(N²) at the outermost nodes. So **leaving 20 or 40 is a step change in rule quality, and a higher order can agree with the scalar path *worse* than GL-40 did.** Full write-up on `setIntegrator()` in `MathIntegratorModuleTorch.h`.
+
+3. **A flat max-over-dataset residual does not mean your side has converged.** See `observ_calc_scalar_cff` above — read the per-point column.
+
+**`DVCSProcessBMJ12Torch`** (`Modules/Processes/DVCS/`) — `public PARTONS::DVCSProcessBMJ12, public DVCSProcessModuleTorch`. Overrides the three batched sub-process atoms (BMJ12 in `float64` tensors; kinematics as no-grad `[N]` tensors, CFF-bilinear/linear layers in-graph) + `setupKinematicsTorchBatch` (φ-independent BMJ12 quantities, 72 angular coeffs, and the BMJ12 helicity combinations of the CFFs the base already fetched into `m_cffsBatch`). It contains no CFF-fetching code of its own, as no PARTONS process does. Unpolarized target only.
 
   It is a **safe scalar drop-in**: it does *not* override the inherited scalar `CrossSectionBH/VCS/Interf`, so driving it through the PARTONS pipeline runs native full-coverage BMJ12 arithmetic. The two method families are fully disjoint — the scalar ones read the base's **private** BMJ12 doubles (populated by `setKinematics`/`initModule`), the tensor ones read our `m_*Batch` members (populated by `setupKinematicsTorchBatch`). That private-member wall is *why* the BMJ12 formulae had to be re-transcribed rather than reused, and it's also why `m_preparedBatch` and the whole prepare/assemble split are invisible to the scalar path. Only `m_M` (proton mass, a constant) is shared unsuffixed between the two.
 
@@ -107,20 +124,44 @@ A **fully differentiable** DVCS observable chain that runs *inside* the PARTONS 
 **Chain correspondence** (all base-typed pointers + virtual dispatch, same as scalar):
 
 ```
-ObservableServiceTorch::computeManyKinematicTorch      ↔  ObservableService::computeManyKinematic
-   computeSingleKinematicTorch                         ↔     computeSingleKinematic
-ObservableTorch::computeTensorBatch (template method)  ↔  Observable::compute
-   computeTensorImplBatch (hook)                       ↔     computeObservable
-DVCSAluMinusTorch::aLUTensorBatch (pointwise)          ↔  DVCSAluMinus::computeObservable
-DVCSProcessModuleTorch::crossSectionTensorBatch (Σ)    ↔  DVCSProcessModule::compute(…,VCSSubProcessType)
-   crossSectionBH/VCS/InterfTensorBatch                ↔     CrossSectionBH/VCS/Interf
-   setupKinematicsTorchBatch                           ↔     setKinematics + CFF forward
-DVCSCFFModuleTorch::computeAllCFFsTensorBatch          ↔  DVCSConvolCoeffFunctionModule::computeCFF
+TORCH (tensor path, grad-carrying)                              SCALAR (PARTONS)
+ObservableServiceTorch::computeManyKinematicTorch          ↔  ObservableService::computeManyKinematic
+   computeSingleKinematicTorch                             ↔     computeSingleKinematic
+   → ObservableResultTorch<K>  (one bean, [N] tensor)      ↔     → List<ObservableResult> (N beans)
+ObservableTorch::computeTensorBatch (template method)      ↔  Observable::compute
+   computeTensorImplBatch (hook)                           ↔     computeObservable
+   → PhysicalType<torch::Tensor>                           ↔     → PhysicalType<double>
+DVCSAluMinusSin1PhiTorch::computeTensorImplBatch (moment)  ↔  DVCSAluMinusSin1Phi::computeObservable
+   integrateTorchBatch, fixed GL-40                        ↔     integrate, adaptive DEXP
+DVCSAluMinusTorch::aLUTensorBatch (static, pointwise)      ↔  DVCSAluMinus::computeObservable
+DVCSProcessModuleTorch::prepareTensorBatch                 ↔  DVCSProcessModule::compute — setup half
+   computeConvolCoeffFunctionTensorBatch  (generic)        ↔     computeConvolCoeffFunction  (generic)
+   setupKinematicsTorchBatch  (BMJ12-specific)             ↔     initModule  (BMJ12-specific)
+DVCSProcessModuleTorch::crossSectionTensorBatch (Σ)        ↔  DVCSProcessModule::compute(…,VCSSubProcessType)
+   → PhysicalType<torch::Tensor> (GEVm2)                   ↔     → PhysicalType<double> (GEVm2)
+   crossSectionBH/VCS/InterfTensorBatch                    ↔     CrossSectionBH/VCS/Interf
+DVCSConvolCoeffFunctionModuleTorch                         ↔  DVCSConvolCoeffFunctionModule
+   ::computeAllCFFsTensorBatch  (the network)              ↔     ::compute → computeCFF
+   or scalarCFFsTensorBatch  (any scalar CFF module,
+      per-point compute(), no grad)
 ```
+
+**Class hierarchy** — every torch class sits directly under the PARTONS class it mirrors, plus a torch mixin; torch-to-torch reuse goes through calls (statics), never inheritance:
+
+```
+PARTONS::DVCSAluMinus            ← DVCSAluMinusTorch           (+ DVCSObservableTorch)
+  └ PARTONS::DVCSAluMinusSin1Phi ← DVCSAluMinusSin1PhiTorch    (+ DVCSObservableTorch, MathIntegratorModuleTorch)
+                                      calls DVCSAluMinusTorch::aLUTensorBatch
+PARTONS::DVCSProcessBMJ12        ← DVCSProcessBMJ12Torch       (+ DVCSProcessModuleTorch)
+PARTONS::DVCSConvolCoeffFunctionModule
+                                 ← DVCSCFFNNTorch              (+ DVCSConvolCoeffFunctionModuleTorch)
+```
+
+Which physics runs: a torch leaf on `DVCSProcessBMJ12Torch` runs the tensor chain (its scalar `computeObservable` is that chain under `NoGradGuard` + `.item()`); on any other process its scalar path is the PARTONS class above it and its tensor path throws. `DVCSProcessBMJ12Torch` driven by PARTONS runs native BMJ12. Any scalar CFF module can sit under the torch process.
 
 `computeTensor`/`computeTensorImpl` (single-kinematic) survive as thin N=1 wrappers over their `…Batch` siblings — they are an entry-point convenience, not a separate implementation.
 
-The only irreducible differences: the torch chain returns a grad-carrying `torch::Tensor` (scalar returns a detached `double` via the result bean), and evaluates the BMJ12 formulae + φ-nodes as `float64` tensors/batches (scalar uses native `double` + a scalar φ loop). With the same DEXP and `float64`, all three `observ_calc*` paths agree to every printed digit.
+The only irreducible differences: the torch chain's result bean carries a grad-carrying `torch::Tensor` (scalar's carries a detached `double`), and evaluates the BMJ12 formulae + φ-nodes as `float64` tensors/batches (scalar uses native `double` + a scalar φ loop). With the same DEXP and `float64`, all three `observ_calc*` paths agree to every printed digit.
 
 ### ⚠️ Coverage caveat — torch path is unpolarized-target only
 
@@ -129,17 +170,19 @@ The torch BMJ12 port (`DVCSProcessBMJ12Torch`) implements **only the unpolarized
 The hazard is **which scalar physics actually runs depends on which classes you wire**, because the torch leaves' scalar virtuals wrap the tensor methods:
 
 - **Base PARTONS classes** (`DVCSProcessBMJ12` + `DVCSAluMinusSin1Phi`, as in `observ_calc()`) → PARTONS' native arithmetic → **full coverage** (polarized targets included). Use these for any polarized-target observable.
-- **Torch leaves driven through the scalar service** (`observ_calc_torch_scalar()`): `DVCSAluMinusTorch::computeObservable` wraps `computeTensor().item()`, so the call routes into the **torch** chain (`crossSectionTensorBatch`), i.e. unpolarized-only physics — *not* the inherited native `CrossSectionBH/VCS/Interf`.
+- **Torch leaves on a torch process, driven through the scalar service** (`observ_calc_torch_scalar()`): the leaf's `computeObservable` wraps `computeTensor().item()`, so the call routes into the **torch** chain (`crossSectionTensorBatch`), i.e. unpolarized-only physics — *not* the inherited native `CrossSectionBH/VCS/Interf`.
+- **Torch leaves on any other process** (since 2026-10-05): the leaf's `computeObservable` falls back to the PARTONS class it derives from, i.e. native physics with full coverage. Only its *tensor* path still requires a torch process.
 
-**The determining factor is always the observable leaf, not the process module:**
+**What runs is decided by the observable leaf AND, for a torch leaf, by the process under it:**
 
 | Observable leaf | Process module | Physics that runs | Coverage |
 |---|---|---|---|
 | `DVCSAluMinusSin1Phi` (base) | `DVCSProcessBMJ12` (base) | native scalar | full |
 | `DVCSAluMinusSin1Phi` (base) | `DVCSProcessBMJ12Torch` | native scalar | full |
 | `DVCSAluMinusSin1PhiTorch` | `DVCSProcessBMJ12Torch` | tensor (unpolarized) | A_LU-type only |
+| `DVCSAluMinusSin1PhiTorch` | `DVCSProcessBMJ12` / any non-torch | native scalar (scalar path only) | full |
 
-Put a `*Torch` observable on top and you are in the tensor chain however you drive it; put a base observable on top and the torch process module behaves exactly like its base class.
+Put a `*Torch` observable on a torch process and you are in the tensor chain however you drive it; put a base observable on top and the torch process module behaves exactly like its base class.
 
 So: **do not wire a `*Torch` observable/process leaf for a polarized-target observable and expect correct results** — its scalar path silently runs the unpolarized torch port (wrong/zero for the polarized contributions), with no error raised. For polarized-target work, use the base PARTONS classes (which remain registered alongside the torch ones). The torch leaves are correct only for unpolarized-target observables (A_LU and siblings). Removing this caveat requires porting the LP/TP coefficient rows into `setupKinematicsTorchBatch` + the sub-process tensor methods.
 
@@ -147,11 +190,35 @@ So: **do not wire a `*Torch` observable/process leaf for a polarized-target obse
 
 ## Data format
 
-Input CSVs are pipe-separated (`|`), **observable format**: `xB | t | Q2 | E | phi | <observable> | error`. `CFF_NN_Fitter::load_data_observable()` returns `(X[N,3]=(xB,t,Q2), E[N], phi[N], y_obs[N]=col 5, sigma[N]=last col)`. Training and prediction operate on the observable (A_LU^{sin1φ}). φ is loaded and passed into the kinematics — the sin1φ moment integrates it out, but it's kept so `CustomLoss` is reusable for φ-dependent observables.
+Input CSVs are pipe-separated (`|`), **observable format**: `xB | t | Q2 | E | phi | <observable> | error`. `CFF_NN_Fitter::load_data_observable()` returns an `ObservableData` struct: `X[N,3]=(xB,t,Q2)`, `E[N]`, `phi[N]`, `y_obs[N]` (field 6), `sigma[N]` (field 7), and **`observableName`** (the header's field 6).
+
+⚠️ **The header's 6th field SELECTS THE OBSERVABLE THE FIT COMPUTES**, as of 2026-09-24. It must be the **PARTONS scalar observable class name** — `DVCSAluMinusSin1Phi`, `DVCSAcCos0Phi`, `DVCSCrossSectionDifferenceLUMinus`, … — not a free-form label. The tensor leaf that gets wired is that name **+ `"Torch"`**, resolved through `ModuleObjectFactory::newDVCSObservable(const std::string&)`, so there is no mapping table to maintain.
+
+The scalar name rather than the torch one for two reasons: the file then describes *physics* rather than our implementation (it stays valid for a non-torch consumer), and it yields **both** classIds — the native one for `observ_calc_scalar_cff()` and the tensor twin by suffix.
+
+Before this, the header was read and **discarded** while `CustomLoss` hardcoded `DVCSAluMinusSin1PhiTorch`, so pointing the fitter at a file of A_C data silently fitted A_LU to it and reported nothing worse than a poor χ². `CustomLossImpl`'s `observableName` parameter is therefore **required, not defaulted** — a default would reinstate exactly that failure. An unresolvable name throws at startup naming the file, the header string and both spellings; in particular the 37 observables with no torch twin (the whole polarized-target sector) now fail loudly instead of silently running the unpolarized port.
+
+**The header is validated**: exactly 7 fields, the 7th named `error`. That requirement closes a latent bug by construction — σ is read with `rows[i].back()`, so on a 6-column file it would silently have been the observable itself. Only `*_error.csv` files are fittable.
+
+φ is loaded and passed into the kinematics. A moment leaf integrates it away; a **pointwise** leaf evaluates each row at its own φ, so for those the φ column is live data.
 
 The old CFF-label loader `CFF_NN_Fitter::load_data()` (which read `…|ImH|ReH|…` columns as NN targets) was **removed** (2026-06-18) — the workflow now fits the observable, not CFF labels. (`NN_Fitter::load_data()` in the separate `NN_Fit.{h,cpp}` is unrelated and still used by the `NN_CFF_fit` executable.)
 
-Data path and output paths are hardcoded absolute paths in `src/Run_CFF_NN_Fit.cpp` and `src/NNFit/CFF_NN_Fit.cpp` (pointing to `My_Analysis/Partons_output/`). Update these when moving environments. Current data file: `Data/Partons_input/BSA_CLAS_07_KK_format_ALU_error.csv` (16 points).
+Data path and output paths are hardcoded absolute paths in `src/Run_CFF_NN_Fit.cpp` and `src/NNFit/CFF_NN_Fit.cpp` (pointing to `My_Analysis/Partons_output/`). Update these when moving environments.
+
+**Datasets fitted so far** — switching between them is two lines in `Run_CFF_NN_Fit.cpp` (path + output layer); the observable follows the header, and the process is the fitter's `process_name` argument (PARTONS name, default `"DVCSProcessBMJ12"`; the tensor paths use its `Torch` twin, resolved by name):
+
+| File | Observable | N | Output | Result |
+|---|---|---|---|---|
+| `BSA_CLAS_07_..._ALU_error.csv` | `DVCSAluMinusSin1Phi` | 16 | ImH | R² 0.79, χ²/n 0.28 |
+| `BCA_HERMES_12_..._AC_cos0phi_error.csv` | `DVCSAcCos0Phi` | 18 | **ReH** | R² 0.89, χ²/n 0.25 |
+| `BSD_CLAS_18_..._XLU_phi_error.csv` | `DVCSCrossSectionDifferenceLUMinus` | **3008** | ImH | R² 0.76, χ²/n 1.68 |
+
+ReH for A_C because its **cosine** moments carry the **real** parts of the CFFs; ImH for the two helicity-odd observables, whose sine harmonics carry the imaginary parts.
+
+The CLAS 2018 set is the first **per-φ** dataset (230 distinct φ over 1250 kinematic bins) and the first large one. Two things it revealed: the batched chain scales well (188× the points for 3.8× the time per epoch — 61 ms vs ~16 ms, because a pointwise leaf runs at M=1 where a GL-40 moment runs at M=40), and the 3 → 6 → 1 network **underfits** it (train ≈ val to three digits, flat from epoch ~1000, χ²/n 1.68) where the same net overfits a 16-point file. Candidate causes, in order: only one CFF is fitted while XLU's interference term involves ImH, ImE and ImH̃; 6 hidden neurons; `x_pow = 0` over xB 0.124–0.500.
+
+⚠️ Two files carry `error` columns whose values exceed the observable itself (up to 1815 on values in [−1.1, 1.8], 3 points). They self-weight to ~1e-15 of a normal point, so they are effectively excluded rather than fitted — but they break naive autoscaling in plots. See the notebook note below.
 
 ## Output files (`My_Analysis/Partons_output/`)
 
@@ -424,7 +491,7 @@ Make the Torch chain **generic (channel-ready) and link-for-link symmetric with 
 
 **Min-max scaling carried into the CFF module.** `train_nn()` fits `m_X_min`/`m_X_max` on the training set; these are now passed into `DVCSCFFNNTorch::setModel(net, outputLayer, xMin={}, xMax={})` (folded into `setModel`, not a separate `setScaling`, so the model and its preprocessing travel together). `computeCFF`/`computeCFFTensor` apply `(x−xMin)/(xMax−xMin)` (guarded by `m_xMin.defined()`, so undefined = raw features). Fixes a real train/inference scaling mismatch.
 
-**Generic templates introduced** (`ObservableTorch<K>`, `ProcessModuleTorch<K>`, `ObservableServiceTorch<K>`), instantiated for DVCS via alias / channel subclass — tensor twins of PARTONS' `Observable<K,R>` / `ProcessModule<K,R>` / `ObservableService<K,R>`. `ResultType` collapses to `torch::Tensor`.
+**Generic templates introduced** (`ObservableTorch<K>`, `ProcessModuleTorch<K>`, `ObservableServiceTorch<K>`), instantiated for DVCS via alias / channel subclass — tensor twins of PARTONS' `Observable<K,R>` / `ProcessModule<K,R>` / `ObservableService<K,R>`. `ResultType` collapses to `torch::Tensor`. *(It collapses to `ObservableResultTorch<K>` as of 2026-09-23 — see those notes.)*
 
 **NVI symmetry on the observable.** `ObservableTorch::computeTensor()` is now a public template method delegating to the protected pure-virtual `computeTensorImpl()` — the exact analog of scalar `compute()`/`computeObservable()`. Leaves override `computeTensorImpl`.
 
@@ -711,7 +778,7 @@ Built clean; ran `Run_CFF_NN_Fit` end-to-end. Training loss reads as a reduced �
 - `hopeless_val_loss = 100.f` / `hopeless_check_epoch = 200` / `max_retries_per_replica = 5` are initial defaults, not yet tuned against the actual observed replica-loss distribution on the 16-point dataset. *(The retry parameter was renamed `max_tries_per_replica` and its default raised to 30 on 2026-09-18, along with the exhaustion policy — see that session's notes. The threshold values still stand as written.)*
 - Per-replica `fit_once` calls are still sequential (no threading); `n_replicas × (1+retries)` full training runs is the dominant cost noted in "Run_CFF_NN_Fit.cpp wiring" above — a candidate for a future speedup pass (independent per-replica RNG/graphs make this an easier parallelization target than the earlier #4 per-point-threading idea, since there's no shared-gradient race: each replica has its own `net`/optimizer end-to-end).
 - `CFF_plots_ALU_2007_xpow_replica_Farm.ipynb` (untracked, in `My_Analysis/Codes/`) appears to be in-progress replica-band plotting work, not yet committed.
-- **(2026-09-15) A future dataset is planned that trains on raw per-phi A_LU directly**, rather than the sin1φ Fourier moment used everywhere today (`DVCSAluMinusSin1PhiTorch`). When that work starts, `DVCSAluMinusTorch::computeTensorImplBatch(List<K>)` (branch `vect_optionA`) needs a real implementation instead of its current throwing placeholder — it needs each of the N kinematics paired with its *own* phi (an `[N]` own-phi broadcast), whereas the existing `aLUTensorBatch`/`crossSectionTensorBatch` machinery broadcasts phi as an `[M]` axis *shared* across all N points (an `[N,M]` outer product, correct for Gauss-Legendre quadrature over the sin1φ moment but not for pointwise data). Plug the new method into the same `...Batch`-suffixed chain (`aLUTensorBatch` → `prepareTensorBatch`/`crossSectionTensorBatch` → `setupKinematicsTorchBatch` → `computeAllCFFsTensorBatch`) that `DVCSAluMinusSin1PhiTorch::computeTensorImplBatch` already uses for the moment case.
+- **(2026-09-15, resolved 2026-09-22) A future dataset is planned that trains on raw per-phi A_LU directly**, rather than the sin1φ Fourier moment. The blocker is gone: `DVCSAluMinusTorch::computeTensorImplBatch(List<K>)` is implemented (see the 2026-09-22 notes). The original description, kept because it explains the shape question — it needs each of the N kinematics paired with its *own* phi (an `[N]` own-phi broadcast), whereas the existing `aLUTensorBatch`/`crossSectionTensorBatch` machinery broadcasts phi as an `[M]` axis *shared* across all N points (an `[N,M]` outer product, correct for Gauss-Legendre quadrature over the sin1φ moment but not for pointwise data). Plug the new method into the same `...Batch`-suffixed chain (`aLUTensorBatch` → `prepareTensorBatch`/`crossSectionTensorBatch` → `setupKinematicsTorchBatch` → `computeAllCFFsTensorBatch`) that `DVCSAluMinusSin1PhiTorch::computeTensorImplBatch` already uses for the moment case.
 
 ---
 
@@ -737,7 +804,7 @@ Confirmed dead before deleting: repo-wide grep found no caller outside the defin
 
 ### Behavioral change: bare `DVCSAluMinusTorch` now throws
 
-`computeTensorImpl` previously worked via `aLUTensor`; it is now a thin N=1 wrapper over `computeTensorImplBatch`, which is still the throwing placeholder. So `computeTensor` **and** the inherited scalar `computeObservable` both throw for a bare `DVCSAluMinusTorch`. Acceptable because nothing instantiates it, and the planned raw-per-φ leaf (2026-09-15 open task) is specified to build on the `…Batch` chain anyway — looping the single-point `aLUTensor` N times would have reinstated exactly the per-point loop the batching work existed to remove. The throw disappears when that leaf gets its own-φ implementation; at that point `DVCSAluMinusTorch` becomes a valid scalar drop-in for A_LU again (N=1 wrapper reproduces pointwise A_LU at the kinematic's stored φ — *provided* the batch hook uses own-φ semantics, not the shared-φ `[N,M]` convention).
+`computeTensorImpl` previously worked via `aLUTensor`; it is now a thin N=1 wrapper over `computeTensorImplBatch`, which is still the throwing placeholder. *(Implemented 2026-09-22 — see that session's notes; the paragraph below describes the state between 2026-09-16 and then.)* So `computeTensor` **and** the inherited scalar `computeObservable` both throw for a bare `DVCSAluMinusTorch`. Acceptable because nothing instantiates it, and the planned raw-per-φ leaf (2026-09-15 open task) is specified to build on the `…Batch` chain anyway — looping the single-point `aLUTensor` N times would have reinstated exactly the per-point loop the batching work existed to remove. The throw disappears when that leaf gets its own-φ implementation; at that point `DVCSAluMinusTorch` becomes a valid scalar drop-in for A_LU again (N=1 wrapper reproduces pointwise A_LU at the kinematic's stored φ — *provided* the batch hook uses own-φ semantics, not the shared-φ `[N,M]` convention).
 
 ### Verification
 
@@ -917,3 +984,392 @@ Two things added earlier the same day broke the chain's governing principle — 
 Also landed: the generic `CFFModuleTorch<K>` template, so every link has a generic template with a channel class under it. Like `ProcessModuleTorch<K>` it carries only a virtual destructor — the PARTONS lifecycle comes from the concrete classes' scalar twin, and the compute signature is channel-specific.
 
 **Verified**, full run: three `observ_calc*` paths identical to every printed digit (0.161506), and the dataset scan reproduces **2.5252e-09 / 1.23111e-08** — bit-for-bit its value from before the rewrite, which is what a pure refactor should look like when the conversion has moved between layers and the adapter arrives through different wiring.
+
+
+---
+
+## Session notes (2026-09-22)
+
+### Pointwise A_LU: the own-φ leaf, implemented
+
+`DVCSAluMinusTorch::computeTensorImplBatch` had thrown since 2026-09-15, on the reasoning that a pointwise batched A_LU needs "a new per-point-phi broadcasting mode or a wasteful O(N^2) diagonal extraction". It needs neither.
+
+Every φ-dependent term in the BMJ12 assembly is built by broadcasting `[N]` kinematics — `unsqueeze(1)` → `[N,1]` — against whatever shape φ has. Nothing assumes φ has length M. So φ's **shape alone** selects the mode:
+
+| φ passed as | broadcast | meaning |
+|---|---|---|
+| `[M]` | `[N,1] × [M] → [N,M]` | every point at every quadrature node — the moment leaves |
+| `[N,1]` | `[N,1] × [N,1] → [N,1]` | point *i* at its own φ_i — pointwise |
+
+The implementation is therefore: unpack `phi[N]` from the kinematic list (the moment leaves deliberately ignore it), `unsqueeze(1)`, call the same `aLUTensorBatch`, `squeeze(1)`. Fully vectorized, no per-point loop, and **cheaper than a moment** — same operation count with M = 1 rather than 20.
+
+This unblocks the planned raw-per-φ dataset and the four pointwise A_LU observables (`DVCSAluMinus`, `AluPlus`, `AluDVCS`, `AluInt`). `CustomLoss` needs no change: φ has been loaded and carried into the kinematics since 2026-06-18 precisely for this.
+
+### The differential test now takes the observable pair as an argument
+
+`observ_calc_scalar_cff(nativeClassId, torchClassId, label)` — so any torch leaf can be checked against the PARTONS class it mirrors by passing two classIds, with no new test code per observable. `main` runs it twice.
+
+**The pointwise result is the strongest verification the torch port has.** Native PARTONS vs torch, identical constant CFFs, all 16 dataset points:
+
+| leaf under test | max relative deviation |
+|---|---|
+| sin(1φ) moment | 1.2e-8 — GL-20 quadrature vs the scalar path's adaptive DEXP |
+| **pointwise, own φ** | **2.6e-15** — most points exactly 0 |
+
+A pointwise observable integrates nothing, so the quadrature difference vanishes and what remains is floating-point rounding order. That isolates the BMJ12 transcription from every other source of disagreement: two independent implementations, agreeing to the last bit, at sixteen kinematic points.
+
+Verified in a full run: the three `observ_calc*` paths agree to every printed digit (0.114756), both differential tests as above, 10 replicas trained and exported, 271 s.
+
+---
+
+## Session notes (2026-09-22, later)
+
+### The A_LU family completed — seven new leaves
+
+Issue #16, branch `16-add-dvcs-observables`. All nine PARTONS A_LU observables now have torch twins.
+
+**The plan was wrong in one respect, caught by reading the sources first.** I had assumed `AluDVCS`/`AluInt` were sub-process selections, and designed two hooks (`beamCharge()`, `subProcess()`) around that. They are not: they are **charge combinations** built from four cross sections each. The charge sum cancels the interference term (odd in beam charge); the charge difference isolates it. So the hook became the whole asymmetry:
+
+```cpp
+virtual torch::Tensor asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
+        const torch::Tensor& phi);
+```
+
+`aLUTensorBatch` prepares once and delegates, so each variant assembles only the cross sections its formula needs — mirroring the scalar classes, where each calls `ProcessModule::compute()` as many times as its expression requires.
+
+**Siblings, not subclasses.** `DVCSAluPlusTorch`, `DVCSAluDVCSTorch` and `DVCSAluIntTorch` each derive from *their own* PARTONS class plus `DVCSObservableTorch`, repeating ~45 lines of machinery, because each must **be** its own PARTONS observable for the scalar chain — an AluPlus is not an AluMinus. A shared mixin was considered and rejected: it would add a layer the scalar side does not have, and PARTONS' own classes are siblings for exactly this reason.
+
+### Two findings from the verification
+
+**1. The GL order is per-integrand.** Against native PARTONS with fixed CFFs:
+
+| | sin(1φ) | sin(2φ) |
+|---|---|---|
+| max relative deviation | ~1.2e-8 | **~4.8e-7** |
+
+~40× looser for the higher harmonic under the same GL-20 rule. Harmless here — five orders below the data's ~6% precision — but it confirms the 2026-06-22 advice to re-validate rather than assume. A sin(3φ) moment would want checking before use.
+
+**2. Some observables vanish identically, and the test said "12.6".** `AluDVCS` and its sin(1φ) moment are exactly zero for these CFFs: summing over beam charge removes the interference term and nothing beam-helicity-odd survives. Both implementations returned numerical zero (~1e-17), and the relative metric divided noise by noise. The statistic is now taken only where `|native| > 1e-12`, with an explicit "vanishes identically" message otherwise; `max |diff|` is always reported and is the meaningful number in that case.
+
+This was worth fixing before the remaining 50 observables: many of them vanish for any given CFF configuration, and a test that cries wolf on those is worse than no test.
+
+### State of issue #16
+
+| Tier | Observables | Status |
+|---|---|---|
+| A_LU | 9 | ✅ complete |
+| A_C | 5 | ✅ complete (2026-09-22) |
+| Cross sections | 8 | ✅ complete (2026-09-23) |
+| `DVCSCrossSectionTotal` | 1 | deliberately skipped — GSL VEGAS Monte Carlo, not a tensor-chain shape |
+| A_UL, A_LL, A_UT, A_LT | 36 | **blocked** — need the LP/TP coefficient rows in `setupKinematicsTorchBatch`; file separately |
+
+**22 of 59 ported — the whole unpolarized-target sector is done.** Everything that remains needs the LP/TP rows.
+
+
+### GL-40: the order raised again, and what it costs
+
+Following the sin(2φ) result above, the order convergence was swept across all five moment leaves:
+
+| | sin(1φ) | sin(2φ) (AluMinus) | sin(2φ) (AluInt) |
+|---|---|---|---|
+| GL-20 | 1.2e-8 | 4.8e-7 | 1.1e-7 |
+| **GL-40** | **1.8e-13** | **7.0e-12** | **6.5e-12** |
+| GL-80 | 1.7e-13 | 6.8e-12 | **1.9e-10** ← worse |
+
+GL-40 buys 4–5 orders of magnitude; GL-80 buys nothing, and past the floor an observable can get *worse*. At GL-40 the residual is no longer our quadrature error but the scalar side's own DEXP. *(The "worse at GL-80" was attributed here to extra nodes accumulating rounding. That was wrong — see the 2026-09-23 notes: 40 is the largest order NumA tabulates, and every order above it uses a solver whose weights are ~100× worse. A step change, not accumulation.)*
+
+**Why raise it when GL-20 was already five orders below the data's precision:** not for the physics — for the test. `observ_calc_scalar_cff()` is the main safety net for porting the remaining 50 observables, and at GL-20 a transcription bug smaller than ~5e-7 would hide inside the quadrature residual. At GL-40 the detection threshold is ~1e-11.
+
+**Cost, measured the same way as the 10 → 20 change** (two full runs normalized by logged epochs):
+
+| | per epoch-line |
+|---|---|
+| GL-20 | 31.804 ms |
+| GL-40 | 32.206 ms — **+1.26%** |
+
+Note this is *not* the +0.06% the 10 → 20 doubling measured, so batched cost is not strictly flat in M: by 40 nodes the element count starts to register. The method's precision is limited (two runs, different seeds, wall time includes non-training work), so read it as "between 0 and ~1.3%". Either way, ~1% of runtime for two orders of magnitude of extra detection sensitivity.
+
+
+---
+
+## Session notes (2026-09-22, later still)
+
+### The A_C family — five leaves
+
+`DVCSAcTorch` + `DVCSAcCos0/1/2/3PhiTorch`. See the "Per-class-parallel observable leaves" section for the formula and why its moments are cosine moments. Built the same way as the A_LU family: a reusable pointwise `aCTensorBatch()` that prepares once and delegates to an `asymmetryTensorBatch()` hook, with each moment supplying only its weight and normalization.
+
+### The A_C moments looked broken, and were not
+
+Verification against native PARTONS with fixed CFFs:
+
+| | max rel |
+|---|---|
+| `DVCSAc` (pointwise) | 4.6e-15 |
+| `AcCos0Phi` | 9.9e-08 |
+| `AcCos1Phi` | 4.6e-08 |
+| `AcCos2Phi` | **1.4e-06** |
+| `AcCos3Phi` | 3.3e-11 |
+
+Five orders looser than the A_LU moments at the same GL-40, which had to be explained before committing. Three checks, in increasing order of strength — **this is the procedure to reuse**:
+
+1. **Raise our own order.** Flat (GL-40 9.91435e-08, GL-80 9.91434e-08, GL-160 9.91427e-08), so our quadrature had converged. Necessary but not sufficient: mutual agreement within one rule family can hide a shared bias.
+2. **Re-run under a different rule FAMILY.** `TRAPEZOIDAL-64` reproduced GL-40 to every printed digit on both outliers (9.91435e-08 and 1.43963e-06). Two constructions with completely different node distributions agreeing is what rules out a shared bias.
+3. **Take the scalar side's own machinery out of the loop.** Integrate PARTONS' *own* pointwise `DVCSAc` over φ with GL-200 and compare to PARTONS' *own* DEXP moment classes — no torch code anywhere in the test. It reproduced every residual above to six digits, including 1.43964195e-06 vs 1.439642e-06.
+
+So the residual is the scalar side's DEXP. Two facts about it worth keeping: PARTONS never calls `setTolerances()`, so the absolute tolerance is its default **0.0**, `DExpIntegrator1D`'s convergence test can never be satisfied, and every call runs to the end of its node table and logs `"Cannot reach tolerances !"` (10 per run of this executable). And DEXP is **tanh-sinh, built for endpoint singularities** — it clusters nodes double-exponentially at the ends and samples the interior sparsely, which is the wrong shape for a smooth 2π-periodic asymmetry whose structure is all in the interior. Not a rule that stopped early; the wrong rule for the integrand.
+
+### `spread_phi` — the pointwise blind spot
+
+Every row of the current data file carries the **same** φ (6.0), so a pointwise leaf scanned over the dataset was being tested at exactly one angle — a charge combination wrong elsewhere in φ would have passed. `observ_calc_scalar_cff(..., spread_phi = true)` replaces the φ column with an even sweep of [0, 2π). Swept, `DVCSAc` holds at 1.5e-14. No-op for a moment leaf.
+
+### The prepare/assemble split, finally measured
+
+The 2026-06-24 hoist-setup work was justified by counting operations and verified only for correctness; its premise was that prepare is the expensive half and the assemble is "lightweight". Measured at N=16, M=40 on the NN chain (3 runs × 300 reps): prepare 2.49–2.68 ms, one assemble 2.27–2.56 ms — **ratio 1.05–1.12, i.e. the same**. The assemble evaluates BH, VCS and interference over the whole `[N,M]` grid, comparable work to the setup.
+
+The conclusion survives for a better reason than the one recorded: **parity is exactly why the split pays**, since every avoided re-preparation costs as much as the call that remains. Dropping it would cost **+34–36%** per A_LU evaluation (2 cross sections per prepare) and **+62–65%** per A_C (4) — so the saving grew when A_C landed. Process-layer figures only; an epoch also pays the integrand, the χ² and `backward()`, so the end-to-end penalty is smaller and was not measured. The benchmark ran 300 forwards with no `backward()`, accumulating autograd graphs, so the ratio is more trustworthy than the absolute milliseconds.
+
+---
+
+## Session notes (2026-09-23)
+
+### The cross-section family — eight leaves
+
+Five pointwise + three φ-integrated; see the leaves section above for the shared skeleton, the nb conversion and why `DVCSCrossSectionTotal` is skipped. **This completes the unpolarized-target sector: 22 of 59.**
+
+Verification against native PARTONS with fixed CFFs, pointwise leaves checked both at the data file's φ and with `spread_phi`:
+
+| | max rel |
+|---|---|
+| all five pointwise | 1e-16 … 3e-15 |
+| `UUVirtualPhotoProductionPhiIntegrated` | 1.6e-07 |
+| `UUDVCSSubProcPhiIntegrated` | 3.9e-07 |
+| `UUMinusPhiIntegrated` | 2.5e-04 |
+
+### Why the φ-integrated orders differ, and what the max statistic hid
+
+The first sweep looked conclusive and was not. `UUMinusPhiIntegrated`'s max residual was **flat from GL-40 to GL-640** (2.4848e-04 throughout), which by the rule above means "our side has converged". True — of the *maximum*. Per point it was hiding a genuine under-resolution:
+
+| point | GL-40 | GL-80 | GL-160 | GL-320 |
+|---|---|---|---|---|
+| xB=0.25, t=−0.488 | **3.0e-5** | 3.0e-9 | 2.8e-11 | 4.1e-12 |
+| two others | 8.1e-6 / 2.5e-4 | identical | identical | identical |
+
+The max was pinned by a point where the *scalar* side is the outlier, while another point converged underneath it. **Read the per-point column.**
+
+Before blaming quadrature, the φ→0 corner got its own check: a log-spaced sweep down to φ = 1e-8, inside the BH peak, showed the two implementations agree to **2e-16** there — so not an integrand difference. A direct φ profile at the binding kinematic then confirmed the peak is real and is BH: ~5900× the value at φ=π, 99.3% of it Bethe-Heitler, while the DVCS sub-process varies only ~35% across the whole range. That is why `UUMinusPhiIntegrated` gets **GL-160** and its two sub-process siblings stay at **GL-40** — where they are not merely adequate but *optimal*, degrading 3.7e-15 → 8.6e-13 if raised.
+
+### GL-20 and GL-40 are privileged orders in NumA
+
+Chasing "why does a higher order make it worse" produced a library finding that governs every future order choice, written up on `setIntegrator()` in `MathIntegratorModuleTorch.h` and summarized in the GL caveat above.
+
+`GaussLegendreIntegrator1D` hardcodes 16-digit tables for **N = 20 and N = 40 only**; everything else uses its Newton solver. Against a Golub–Welsch reference:
+
+| | max \|Δnode\| | max \|Δweight\| | \|Σw − 2\| |
+|---|---|---|---|
+| N=40, tabulated | 2.8e-17 | **1.25e-15** | **exactly 0** |
+| N=80/160/320, Newton | 1.1e-16 | **~1e-13** | ~1e-12 |
+
+Nodes are fine either way; the weights are not, and the computed rule does not integrate even a constant exactly. It is a **defect**, not a precision limit: the loop computes `pp = P'_N(z)`, *then* takes the Newton step, then exits on `|dz| <= EPS = 1e-12`, and stores `2/((1-z²)·pp·pp)` — pairing the final node with a derivative evaluated up to 1e-12 away. Since `w ~ 1/P'_N(z)²`, a displacement `dz` costs `2(P''/P')·dz`, and at a Legendre root the ODE gives `P''/P' = 2z/(1-z²)`, which is O(N²) at the outermost nodes. Verified both ways — re-evaluating `P'_N` at the converged node, or tightening EPS to 1e-15, each recovers the full ~100×:
+
+| N | as written | EPS 1e-15 | fresh `pp` |
+|---|---|---|---|
+| 80 | 1.126e-13 | 1.015e-15 | 8.210e-16 |
+| 160 | 6.555e-13 | 4.069e-15 | 4.069e-15 |
+| 320 | 1.715e-13 | 1.616e-14 | 1.616e-14 |
+
+This retro-explains several things previously written off as "the floor": the sub-process leaves jumping 3.7e-15 → 1.6e-13 across 40 → 80, `AluIntSin2Phi` going 6.5e-12 → 1.9e-10 at GL-80, and the torch-free probe drifting 5e-14 → 1.9e-12 → 2.7e-11 across GL-40/200/1000. The first is the step change; the drift is the recurrence's own mild N growth, visible only once the stale-derivative term is removed.
+
+**Fixable on our side if it ever matters:** `MathIntegratorModuleTorch` only *reads* NumA's `getNodes()`/`getWeights()`, so supplying corrected weights for N outside {20, 40} would recover the 100×. Not done — it sharpens the differential test but changes no physics.
+
+### Open tasks added this session
+
+- **`observ_calc_scalar_cff` reports only the max**, which is what hid the cross-section under-resolution. A per-point summary (worst *n*, or a flag on any point above a threshold) would stop that recurring across the remaining 37 observables.
+- **The LP/TP coefficient rows** remain the one blocker for all 36 polarized-target observables. Separate issue.
+
+
+---
+
+## Session notes (2026-09-23, later)
+
+### Units carried through the tensor chain — `PhysicalType<torch::Tensor>`
+
+The torch chain returned bare tensors while the scalar chain carries `PhysicalType<double>` internally (`DVCSProcessModule::compute` accumulates into `PhysicalType<double> value(0., PhysicalUnit::GEVm2)`). That was the **last place the two chains differed in shape**, and it started to matter when the cross sections landed: they are the first dimensionful observables, and nothing checked their GeV⁻² → nb step.
+
+**The premise was verified before anything was built on it.** `PhysicalType` is a plain template with no constraint on its value type and its members instantiate lazily, so `PhysicalType<torch::Tensor>` needs no patch to PARTONS — but that was an expectation, not a result, so a standalone probe checked it:
+
+```
+requires_grad after +            : 1
+requires_grad after makeSameUnit : 1
+GeV^-2 -> nb factor              : 389379   (expected 389379)
+grad reached w                   : 1   value 4.67255e+06
+unit mismatch caught             : yes
+```
+
+The gradient value is exact, not merely present: with σ = (2w)², sum = 1.5σ, `d(sum·C)/dw = 12·C = 4672551.6`. The chain rule carries *through* the unit conversion, as it must for a constant factor. A `torch::Tensor` is a refcounted handle, so `PhysicalType`'s by-value storage shares the graph instead of copying it.
+
+**What changed** — `ObservableResultTorch<K>` (+ `DVCSObservableResultTorch` alias) added; `ObservableTorch<K>`'s template methods return the bean and its two hooks return `PhysicalType<torch::Tensor>`; both service drivers return the bean; `DVCSProcessModuleTorch`'s three sub-process atoms are tagged `GEVm2` and the assemble accumulates with `PhysicalType::operator+`; all 22 leaves and 5 call sites. 51 files, and **no `CMakeLists.txt` change** — every new file is a header-only template.
+
+**Two payoffs beyond the check itself.** Asymmetries now get their unit **derived rather than asserted**: `PhysicalType::operator/` tags every quotient `NONE`, so `(σ⁺−σ⁻)/(σ⁺+σ⁻)` is dimensionless *because it is a ratio*. And the cross sections lost their hand-copied constant —
+
+```cpp
+return sigma.makeSameUnitAs(PARTONS::PhysicalUnit::NB);   // was: * CONV_GEVm2_TO_NBARN
+```
+
+— so the conversion is declared, not transcribed, and cannot drift from PARTONS'.
+
+**Verification.** Three-path agreement to every digit (0.128611), tensor path keeps `requires_grad = true`, and the 22-observable differential test is **unchanged at 17 of 22**. The five that moved are exactly the cross sections, all at ~1e-16, and all *improved* (e.g. `UUMinus` 4.58e-16 → 3.05e-16). The reason is worth recording: `makeSameUnitAs` computes `value × factor(GEVm2) / factor(NB)`, a **division by 1/C**, where the old code **multiplied by C**. Those differ in the last bit — and since the scalar side runs that identical call, our conversion is now bit-for-bit the one it performs.
+
+### A trap in this API, hit once
+
+`ObservableResultTorch::getTensor()` first returned `const torch::Tensor&`. But **`PhysicalType::getValue()` returns `T` by value**, so the reference bound to a temporary and dangled. With a refcounted handle that does not merely read garbage — it aborts with `pointer being freed was not allocated`, because the handle's destructor runs on a dead object. Returns by value now, which costs nothing (an `intrusive_ptr` bump sharing storage *and* `grad_fn`). Recorded on the method, since anyone adding an accessor here could repeat it.
+
+### What is still NOT mirrored, deliberately
+
+The bean carries no channel type and no result-info. Those exist so PARTONS can serialize to its database and reports; on the tensor path every one of those fields would be written and never read. And a faithful `Result<K>` twin would be inherently one-per-point — its `m_kinematic` is singular, set from a single `kinematic` argument in `DVCSObservable::compute` — which pulls against the batched shape for no benefit, since the caller already holds the kinematics it passed in.
+
+Note an earlier version of this argument claimed a per-point bean would reintroduce "per-point object churn the batching work removed". **That was wrong** and is retracted: the 2026-09-15 work removed the per-point *computation* loop, not object construction (`fit_once` still builds N kinematic beans, once per fit), and even N result beans at N=16 would be ~130 small objects against a ~30 ms epoch. The case against is that the fields are inert here, not that they would be slow.
+
+
+---
+
+## Session notes (2026-09-24)
+
+### The fitted observable now comes from the data file
+
+See the **Data format** section for the convention and the reasoning. The short version: the header's 6th field selects the observable, the tensor leaf is that name + `"Torch"`, and the header is validated (7 fields, the 7th named `error`).
+
+The motivation is worth restating because it was a *silent* failure, not a crash. `load_data_observable()` skipped the header and took column 6 positionally; `CustomLoss` hardcoded `DVCSAluMinusSin1PhiTorch`. Nothing connected the two. Pointing the fitter at a file of A_C data fitted A_LU to it and reported only a poor χ². Tolerable with one observable ported; not with 22.
+
+Verified on five cases: the ALU file reproduces its previous result to every digit; the A_C file wires `DVCSAcCos0PhiTorch`; a typo'd header, a valid-but-unported observable (`DVCSAulMinusSin1Phi`) and a file missing its `error` column each throw at startup with a message naming the file and both spellings.
+
+### Three datasets fitted
+
+See the table in **Data format**. Two findings from the CLAS 2018 per-φ set (3008 points):
+
+**The batching scales.** 188× the points for 3.8× the time per epoch (61 ms vs ~16 ms). Per element the two runs are within ~20%. A *pointwise* leaf runs at M = 1 where a GL-40 moment runs at M = 40, so φ-dependent data is the **cheap** case — had this been a moment over 3008 points it would have been `[3008, 40]`, ~190× the A_LU cost.
+
+**The network underfits it.** Train and validation track to three digits for the whole run and the curve is flat by epoch ~1000 at χ²/n ≈ 1.68 — the opposite of the 16-point fits, where the same net overfit badly. That is a capacity limit, not optimisation noise. Suspects in order: XLU's interference term involves ImH, ImE *and* ImH̃ while only ImH is fitted; 6 hidden neurons; `x_pow = 0` across xB 0.124–0.500.
+
+### Differential tests guarded off in the runner
+
+`const bool runBMJ12DifferentialTests = false`. The calls are kept in place, not deleted — see `observ_calc_scalar_cff`'s entry above for when to flip it back.
+
+Worth recording the structural point, since it will recur: the test lives **inside the production fit runner and scans the fit's own data file**, so it either runs on whatever you are fitting (tens of minutes at 3008 points) or not at all. A `--selftest` flag with its own fixed 16-point file would decouple it and run in ~4 s regardless. Proposed and **deliberately not taken** this session — noted here so the next person does not re-derive it.
+
+### Comparison notebooks
+
+`My_Analysis/Codes/` now holds three, one per dataset, all structurally identical (learning curves → predicted-vs-measured → residuals → pulls → CFF scans with the replica band → Gepard overlay):
+
+| Notebook | Partons fit | Gepard replicas |
+|---|---|---|
+| `CFF_plots_ALU_2007_xpow_replica.ipynb` | A_LU^{sin1φ}, ImH | `gepard_imh_replica_*.json` |
+| `CFF_plots_AC_2012_xpow_replica.ipynb` | A_C^{cos0φ}, ReH | `gepard_reh_replica_*.json` |
+| `CFF_plots_XLU_2018_xpow_replica.ipynb` | XLU, ImH | `gepard_imh_replica_*.json` |
+
+The two new ones derive their scan ranges **from the data file** rather than hardcoding CLAS numbers, and fix the scan slices at the dataset's mean kinematics — matching the convention in Gepard's own `CFF_plots_*_xpow.ipynb`, so both sides are compared on identical slices. Figures carry `_AC` / `_XLU` suffixes so the three sets do not overwrite each other.
+
+⚠️ **`gepard_imh_replica_*.json` carries `dataset: {id: 163, observable: XLU, CLAS, 2018}`** — the XLU replicas. So it is the right file for the XLU notebook, but the **A_LU notebook loads the same files while its markdown claims "the same CLAS 2007 ALU dataset"**. Most likely the XLU fit regenerated them under the same name. The `_BMK`, `_moredat` and `_BMK_moredat` variants have no `dataset` field (they predate it), so one of those may be the original A_LU set. **Unresolved** — the A_LU notebook's Gepard panels should not be trusted until it is.
+
+### A plotting trap worth knowing
+
+`predicted vs measured` renders as an invisible hairline on the CLAS 2018 set. `errorbar(..., xerr=error)` autoscales x to include the error bars; three points have `error` up to 1815 on values spanning [−1.1, 1.8], giving `xlim = ±1996` against `ylim = ±1`; `set_aspect('equal', 'box')` then squashes the axes to 2000:1. Fixed in the XLU notebook by setting the limits from the *values* (`lo`, `hi`, `pad` were already computed for the y = x line). The other two notebooks are unaffected — their errors are comparable to their values — and were left alone.
+
+
+
+---
+
+## Session notes (2026-10-02)
+
+### Any PARTONS CFF module plugs into the torch process directly
+
+`DVCSProcessBMJ12Torch::setupKinematicsTorchBatch` used to throw unless the attached CFF module implemented `DVCSCFFModuleTorch`, so a plain `DVCSCFFStandard` or `DVCSCFFConstant` had to be wrapped in `DVCSCFFScalarTorch` first. The scalar process accepts any CFF module, so the torch one now does too: when the cross-cast fails it evaluates the module per point through its ordinary `compute()` and packs no-grad `[N]` tensors. Nothing is lost — a parametric model has no parameters in the graph.
+
+The per-point loop was **moved, not copied**: it is now the public static `DVCSCFFScalarTorch::evaluateScalarBatch(module, xi, t, Q2, muF2, muR2)`, called by both the adapter's `computeAllCFFsTensorBatch` and the process fallback. The adapter stays, for explicit wiring and for `observ_calc_scalar_cff()`, which still uses it. *(Removed 2026-10-07: the loop moved to `DVCSProcessModuleTorch::scalarCFFsTensorBatch()` and the test attaches `DVCSCFFConstant` directly -- see those notes.)*
+
+Only the **CFF** link gained this tolerance. A `*Torch` observable on a plain `DVCSProcessBMJ12` still throws on both its tensor and its scalar path — discussed and deliberately left for later, because the moment leaves derive from `DVCSAluMinusTorch` rather than from their PARTONS moment class, so a naive fallback to the inherited scalar `computeObservable` would return the **pointwise** observable. The two candidate fixes were delegating to an internal PARTONS instance or re-parenting the 12 moment leaves. *(Re-parenting was implemented 2026-10-05 -- see those notes.)*
+
+Also refreshed `DVCSProcessBMJ12Torch.h`'s class comment, which still named `DVCSCFFNNTorch` as the only CFF source on both paths (stale since 2026-09-21).
+
+**Verified** on the 16-point CLAS 2007 file with all 28 differential tests, run twice from a temporary runner edit (reverted): once through the adapter, once with the plain `DVCSCFFConstant` wired straight into the torch process. The two outputs are **identical line for line**, and every residual matches its earlier baseline (e.g. `AcCos2Phi` 1.43963e-06, `UUMinusPhiIntegrated` 2.48482e-04, pointwise leaves ~1e-16) — so the adapter refactor is value-preserving and the fallback is equivalent to wrapping.
+
+
+---
+
+## Session notes (2026-10-05)
+
+### Moment leaves re-parented; every torch observable composes with any process
+
+Closes the gap left open on 2026-10-02. A `*Torch` observable leaf on a plain `DVCSProcessBMJ12` (or GV08, VGG99) used to throw on both paths. Now its **scalar** path falls back to the native PARTONS class it derives from; its **tensor** path still throws, since a gradient cannot come out of native double arithmetic.
+
+**Why the moment leaves had to be re-parented first.** They derived from the torch pointwise class (`DVCSAluMinusSin1PhiTorch : DVCSAluMinusTorch`), so their inherited PARTONS method was the *pointwise* `DVCSAluMinus::computeObservable` — a fallback to it would have returned A_LU(φ) where A_LU^{sin1φ} was asked for. Two fixes were weighed: **delegate** (hold an internal PARTONS moment instance and forward to it) or **re-parent** (derive from the PARTONS moment class). Re-parenting was chosen because it adds nothing PARTONS lacks: no second object to clone and release, no process module to copy onto it before each call, and `configure()` — XML integrator settings included — reaches the fallback by inheritance rather than by hand-forwarding that could silently be forgotten. Each torch class now sits directly under the PARTONS class it mirrors, the pattern `DVCSCFFNNTorch` and `DVCSProcessBMJ12Torch` already followed.
+
+**What made the fallback exact.** All 12 PARTONS moment classes integrate their pointwise parent through a *qualified, non-virtual* call (`DVCSAluMinus::computeObservable(kinematic, …)`), so the fallback runs PARTONS' code end to end and cannot re-enter the torch override.
+
+**The structural cost.** A re-parented moment can no longer inherit the torch pointwise class: both that class and the PARTONS moment class derive from `PARTONS::DVCSAluMinus`, and PARTONS uses no virtual inheritance, so it would hold two such subobjects. The pointwise layers (`aLUTensorBatch`, `aCTensorBatch`, `crossSectionNbTensorBatch`) and the `asymmetryTensorBatch` formulas therefore became **statics** taking the prepared `DVCSProcessModuleTorch&`, and the moment leaves call their parent's static. The ten copies of the cross-cast-or-throw helper (`torchProcessModule()`) were replaced by two statics on `DVCSProcessModuleTorch`: `tryFrom()` (nullptr if not torch, for the fallback branch) and `from()` (throws, for the tensor path). The two integrator bases share the names `setIntegrator` and `m_mathIntegrator`; the leaves already qualified `MathIntegratorModuleTorch::setIntegrator`, and an unqualified use would be a compile error rather than a silent choice.
+
+**Verified** on the 16-point CLAS 2007 file, from temporary runner/test edits that were reverted (the fit outputs they overwrote were backed up and restored):
+
+| check | result |
+|---|---|
+| 28 differential tests, torch process | output **identical** to the pre-refactor run, 0 of 791 lines differ |
+| each torch leaf on a plain `DVCSProcessBMJ12` via the scalar service vs its PARTONS class (all 28) | `max |diff| = 0` on every one |
+| tensor path on a plain process (all 28) | throws `Tensor path requires a DVCSProcessModuleTorch process module.` |
+| three-path `observ_calc*` after a central fit | 0.14266 on all three, `requires_grad = true`; fit R² 0.68 |
+
+One behaviour change worth knowing: a torch leaf wired to a non-torch process by mistake no longer announces itself on the scalar path — it quietly returns PARTONS' value, which is correct (full coverage, polarized targets included) but means a miswired *training* setup is only caught when the tensor path runs, where it still throws.
+
+
+---
+
+## Session notes (2026-10-07)
+
+### `DVCSCFFScalarTorch` removed
+
+The adapter existed because the torch process used to accept only a CFF module implementing `DVCSCFFModuleTorch`. Since 2026-10-02 the process accepts any PARTONS CFF module directly, which left the adapter with no capability of its own — only two dependents, both incidental: the process fallback called its static `evaluateScalarBatch()` (placed there to avoid a copy while the adapter was still in use), and `observ_calc_scalar_cff()` still wired it, having been written before the fallback existed.
+
+- The per-point loop moved to **`DVCSProcessModuleTorch::scalarCFFsTensorBatch()`** (protected static, header-only). Converting a scalar CFF module into tensors is the process's job, and at the channel layer any future torch process inherits it. `DVCSProcessModuleTorch.h` now includes `DVCSCFFModuleTorch.h` instead of forward-declaring it (no cycle: the CFF header includes only torch and its generic base).
+- `observ_calc_scalar_cff()` attaches `DVCSCFFConstant` to `DVCSProcessBMJ12Torch` directly, as path A does to the native process.
+- Deleted the class's two files and its two `CMakeLists.txt` lines. Also corrected the comments in `CFFModuleTorch.h` / `DVCSCFFModuleTorch.h` that still said the CFF source receives observable-level kinematics and runs the converters itself — stale since 2026-09-21, when the process took over the conversion.
+
+Nothing lost: the one thing only the adapter could do — present a scalar model as a `DVCSCFFModuleTorch` to code calling `computeAllCFFsTensorBatch()` directly, bypassing the process — had no caller.
+
+**Verified**: the 28 differential tests on the 16-point CLAS 2007 file (temporary runner edit, reverted; no training, so no outputs written) reproduce the adapter-era output **line for line**, 0 of 791 lines differ.
+
+### CFF interface renamed to follow the naming convention
+
+Every torch interface is named after its PARTONS twin plus `Torch` (`ObservableTorch`, `DVCSProcessModuleTorch`, `MathIntegratorModuleTorch`, …) except the CFF link, added 2026-09-21 under shorter names. Renamed:
+
+- `CFFModuleTorch<K>` → **`ConvolCoeffFunctionModuleTorch<K>`** (twin of `ConvolCoeffFunctionModule<K,R>`)
+- `DVCSCFFModuleTorch` → **`DVCSConvolCoeffFunctionModuleTorch`** (twin of `DVCSConvolCoeffFunctionModule`)
+
+Files and include guards renamed with them. The PARTONS name describes the *link*, not the computation — PARTONS itself uses it for modules that convolve nothing (`DVCSCFFConstant`, `DVCSCFFNN`) — so the twin carries it too. The concrete `DVCSCFFNNTorch` keeps its name, which already follows PARTONS' leaf naming (`DVCSCFFNN`). Session notes above keep the old names as written.
+
+The chain-correspondence diagram above was rewritten at the same time: it now shows the moment leaf's integral, the prepare/assemble split, the static pointwise layer, the scalar-CFF route through `scalarCFFsTensorBatch`, and a class-hierarchy diagram reflecting the 2026-10-05 re-parenting.
+
+### The generic CFF step moved into the torch process base
+
+`DVCSProcessBMJ12Torch::setupKinematicsTorchBatch` used to do two jobs: the BMJ12 kinematics, and the generic xi-converter → scales → CFF-module fetch. PARTONS splits them: the base `DVCSProcessModule::compute()` runs `computeConvolCoeffFunction()` (generic, stores `m_dvcsConvolCoeffFunctionResult`) and then the concrete process's `initModule()`; no PARTONS process touches the xi-converter, scales or CFF module itself. The torch chain now does the same:
+
+- `DVCSProcessModuleTorch::computeConvolCoeffFunctionTensorBatch()` — the generic step, reaching the modules through PARTONS' public getters on the process's own PARTONS base (a `dynamic_cast` from the mixin; it throws if a torch process is not also a `PARTONS::DVCSProcessModule`).
+- `m_cffsBatch` — where it stores the CFFs, twin of `m_dvcsConvolCoeffFunctionResult`.
+- `prepareTensorBatch()` — runs the generic step, then `setupKinematicsTorchBatch()`, in PARTONS' order.
+- `DVCSProcessBMJ12Torch::setupKinematicsTorchBatch()` — now BMJ12 only; it reads `m_cffsBatch`.
+
+So a second torch process implements exactly what a second PARTONS process does: its setup and its three sub-process cross sections.
+
+**Verified**: the 28 differential tests (scalar-CFF route) reproduce the baseline line for line; after a central fit on the 16-point file the three `observ_calc*` paths agree (0.144702, `requires_grad = true`, R² 0.75) — the network route through the moved code. Fit outputs overwritten by that run were backed up and restored byte-for-byte.
+
+### The process is a setting, resolved by name
+
+The process used to be compiled in: `DVCSProcessBMJ12Torch::classId` at five sites (`CustomLoss.cpp` and four in `CFF_NN_Fit.cpp`) and `DVCSProcessBMJ12::classId` at two. It is now one string, `CFF_NN_Fitter`'s `process_name` argument (default `"DVCSProcessBMJ12"`, set explicitly in `Run_CFF_NN_Fit.cpp`), following the observable header's convention: the PARTONS scalar name, with the tensor paths using `+ "Torch"`. One string gives both classes, so the native and tensor paths cannot end up on different processes. `CustomLoss` takes it as a **required** argument, like `observableName`.
+
+Resolution goes through PARTONS' factory by name — the mechanism its XML scenarios use — via `DVCSProcessModuleTorch::newTorchProcessModule(name, caller)`. Neither `CustomLoss.cpp` nor `CFF_NN_Fit.cpp` includes a concrete process header any more, so a new torch process needs no change to either: its `.cpp` registers itself at startup.
+
+It fails at startup and tells the two mistakes apart:
+
+- `"DVCSProcessGV08"` → `Process 'DVCSProcessGV08' has no tensor twin 'DVCSProcessGV08Torch' registered.`
+- `"DVCSProcessBMJ1Z"` → `No PARTONS process named 'DVCSProcessBMJ1Z' -- check the spelling.` (decided by looking the PARTONS name up in `BaseObjectRegistry::get`, which does not create a module).
+
+Note this PARTONS installation has **BMJ12, GV08 and VGG99** only — no BM03, which an earlier note listed.
+
+**Verified**: with `"DVCSProcessBMJ12"`, a central fit plus the 28 differential tests reproduce the baseline line for line (only the test header now names the process); the three `observ_calc*` paths agree (0.131951, `requires_grad = true`). Both failure messages checked. The test runs' fit outputs were backed up and restored byte-for-byte.

@@ -83,12 +83,31 @@ list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/NN_Fit.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/CFF_NN_Fit.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/CustomLoss.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.cpp)
-list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFScalarTorch.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/MathIntegratorModuleTorch.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Services/DVCS/DVCSObservableServiceTorch.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusTorch.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluPlusTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluDVCSTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluIntTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin2PhiTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluDVCSSin1PhiTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluIntSin1PhiTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluIntSin2PhiTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAcTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAcCos0PhiTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAcCos1PhiTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAcCos2PhiTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSAcCos3PhiTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUMinusTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionDifferenceLUMinusTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUBHSubProcTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUDVCSSubProcTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUVirtualPhotoProductionTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUMinusPhiIntegratedTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUDVCSSubProcPhiIntegratedTorch.cpp)
+list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUVirtualPhotoProductionPhiIntegratedTorch.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/Run_CFF_NN_Fit.cpp)
 list(REMOVE_ITEM source_files ${CMAKE_CURRENT_SOURCE_DIR}/src/nn_bsa.cpp)
 
@@ -166,12 +185,31 @@ set_property(TARGET NN_CFF_fit PROPERTY CXX_STANDARD 17)
 add_executable(Run_CFF_NN_Fit src/Run_CFF_NN_Fit.cpp src/NNFit/CFF_NN_Fit.cpp
 	src/NNFit/CustomLoss.cpp
 	src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.cpp
-	src/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFScalarTorch.cpp
 	src/NNFit/Theory/Modules/MathIntegratorModuleTorch.cpp
 	src/NNFit/Theory/Modules/Services/DVCS/DVCSObservableServiceTorch.cpp
 	src/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.cpp
 	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusTorch.cpp
-	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.cpp)
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluPlusTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluDVCSTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluIntTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin2PhiTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluDVCSSin1PhiTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluIntSin1PhiTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAluIntSin2PhiTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAcTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAcCos0PhiTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAcCos1PhiTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAcCos2PhiTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSAcCos3PhiTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUMinusTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionDifferenceLUMinusTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUBHSubProcTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUDVCSSubProcTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUVirtualPhotoProductionTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUMinusPhiIntegratedTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUDVCSSubProcPhiIntegratedTorch.cpp
+	src/NNFit/Theory/Modules/Obs/DVCS/DVCSCrossSectionUUVirtualPhotoProductionPhiIntegratedTorch.cpp)
 target_include_directories(Run_CFF_NN_Fit PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(
 	Run_CFF_NN_Fit

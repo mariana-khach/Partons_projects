@@ -1,0 +1,116 @@
+//
+// Created by Mariana Khachatryan on 9/22/26.
+//
+
+#include "NNFit/Theory/Beans/Obs/DVCS/DVCSObservableResultTorch.h"
+#include "NNFit/Theory/Modules/Obs/DVCS/DVCSAluIntTorch.h"
+
+#include <ElementaryUtils/logger/CustomException.h>
+#include <partons/BaseObjectRegistry.h>
+// Complete types needed here: the source of the dynamic_cast below, and
+// PhysicalUnit for the scalar wrapper.
+#include <partons/modules/process/DVCS/DVCSProcessModule.h>
+#include <partons/utils/type/PhysicalUnit.h>
+
+#include <vector>
+
+#include "NNFit/Theory/Modules/Processes/DVCS/DVCSProcessModuleTorch.h"
+
+const unsigned int DVCSAluIntTorch::classId =
+        PARTONS::BaseObjectRegistry::getInstance()->registerBaseObject(
+                new DVCSAluIntTorch("DVCSAluIntTorch"));
+
+DVCSAluIntTorch::DVCSAluIntTorch(const std::string& className)
+        : PARTONS::DVCSAluInt(className), DVCSObservableTorch() {
+}
+
+DVCSAluIntTorch::DVCSAluIntTorch(const DVCSAluIntTorch& other)
+        : PARTONS::DVCSAluInt(other), DVCSObservableTorch(other) {
+}
+
+DVCSAluIntTorch::~DVCSAluIntTorch() {
+}
+
+DVCSAluIntTorch* DVCSAluIntTorch::clone() const {
+    return new DVCSAluIntTorch(*this);
+}
+
+PARTONS::PhysicalType<torch::Tensor> DVCSAluIntTorch::aLUTensorBatch(DVCSProcessModuleTorch& proc,
+        const torch::Tensor& xB,
+        const torch::Tensor& t, const torch::Tensor& Q2,
+        const torch::Tensor& E, const torch::Tensor& phi) {
+
+    // Prepare once (kinematics + one batched NN forward), then assemble only
+    // the cross sections this variant's formula needs.
+    proc.prepareTensorBatch(xB, t, Q2, E);
+    return asymmetryTensorBatch(proc, phi);
+}
+
+PARTONS::PhysicalType<torch::Tensor> DVCSAluIntTorch::asymmetryTensorBatch(DVCSProcessModuleTorch& proc,
+        const torch::Tensor& phi) {
+
+    // Differencing over beam charge isolates the interference term (odd in
+    // charge) in the numerator, while the denominator keeps the charge sum.
+    PARTONS::PhysicalType<torch::Tensor> sPP = proc.crossSectionTensorBatch(+1., +1., phi);
+    PARTONS::PhysicalType<torch::Tensor> sPM = proc.crossSectionTensorBatch(+1., -1., phi);
+    PARTONS::PhysicalType<torch::Tensor> sMP = proc.crossSectionTensorBatch(-1., +1., phi);
+    PARTONS::PhysicalType<torch::Tensor> sMM = proc.crossSectionTensorBatch(-1., -1., phi);
+
+    PARTONS::PhysicalType<torch::Tensor> numerator   = (sPP - sPM) - (sMP - sMM);
+    PARTONS::PhysicalType<torch::Tensor> denominator = (sPP + sPM) + (sMP + sMM);
+
+    return numerator / denominator;
+}
+
+PARTONS::PhysicalType<torch::Tensor> DVCSAluIntTorch::computeTensorImplBatch(
+        const PARTONS::List<PARTONS::DVCSObservableKinematic>& kinematics) {
+
+    // Each kinematic at its OWN phi: pass phi as [N,1] rather than the moment
+    // leaves' shared [M] grid (see DVCSAluMinusTorch for the broadcasting).
+    const size_t N = kinematics.size();
+    std::vector<double> xBVec(N), tVec(N), Q2Vec(N), EVec(N), phiVec(N);
+    for (size_t i = 0; i < N; ++i) {
+        const PARTONS::DVCSObservableKinematic& kin = kinematics[i];
+        xBVec[i]  = kin.getXB().getValue();
+        tVec[i]   = kin.getT().getValue();
+        Q2Vec[i]  = kin.getQ2().getValue();
+        EVec[i]   = kin.getE().getValue();
+        phiVec[i] = kin.getPhi().getValue();
+    }
+    const torch::TensorOptions f64 = torch::TensorOptions().dtype(torch::kFloat64);
+    torch::Tensor xB  = torch::tensor(xBVec, f64);
+    torch::Tensor t   = torch::tensor(tVec, f64);
+    torch::Tensor Q2  = torch::tensor(Q2Vec, f64);
+    torch::Tensor E   = torch::tensor(EVec, f64);
+    torch::Tensor phi = torch::tensor(phiVec, f64).unsqueeze(1);
+
+    PARTONS::PhysicalType<torch::Tensor> r =
+            aLUTensorBatch(
+            DVCSProcessModuleTorch::from(m_pProcessModule, getClassName()),
+            xB, t, Q2, E, phi);
+    return PARTONS::PhysicalType<torch::Tensor>(r.getValue().squeeze(1),
+            r.getUnit()); // [N,1] -> [N]
+}
+
+PARTONS::PhysicalType<torch::Tensor> DVCSAluIntTorch::computeTensorImpl(
+        const PARTONS::DVCSObservableKinematic& kinematic) {
+    PARTONS::List<PARTONS::DVCSObservableKinematic> list;
+    list.add(kinematic);
+    PARTONS::PhysicalType<torch::Tensor> r = computeTensorImplBatch(list);
+    return PARTONS::PhysicalType<torch::Tensor>(r.getValue()[0], r.getUnit());
+}
+
+PARTONS::PhysicalType<double> DVCSAluIntTorch::computeObservable(
+        const PARTONS::DVCSObservableKinematic& kinematic,
+        const PARTONS::List<PARTONS::GPDType>& gpdType) {
+    if (!DVCSProcessModuleTorch::tryFrom(m_pProcessModule))
+        return PARTONS::DVCSAluInt::computeObservable(kinematic, gpdType);
+
+    torch::NoGradGuard no_grad;
+    DVCSObservableResultTorch r =
+            computeTensor(kinematic);
+    // The unit is taken FROM the tensor result rather than hardcoded here, so
+    // the two paths cannot disagree about what this observable returns.
+    return PARTONS::PhysicalType<double>(r.getTensor().item<double>(),
+            r.getUnit());
+}

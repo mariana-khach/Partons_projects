@@ -8,6 +8,8 @@
 #include <partons/beans/gpd/GPDType.h>
 #include <partons/beans/observable/DVCS/DVCSObservableKinematic.h>
 #include <partons/modules/process/DVCS/DVCSProcessBMJ12.h>
+#include <partons/utils/type/PhysicalType.h>
+#include <partons/utils/type/PhysicalUnit.h>
 #include <torch/torch.h>
 
 #include <string>
@@ -20,14 +22,19 @@
  * @brief Differentiable (libtorch) twin of PARTONS::DVCSProcessBMJ12.
  *
  * Subclasses DVCSProcessBMJ12 so it is a drop-in process module: driven through
- * the scalar pipeline it behaves exactly like the base class (the inherited
- * scalar CrossSection* virtuals + the attached DVCSCFFNNTorch scalar wrapper).
+ * the scalar pipeline it behaves exactly like the base class. It overrides none
+ * of the scalar virtuals, so the inherited CrossSection* methods run native
+ * BMJ12 (full coverage, polarized targets included) with whatever CFF module is
+ * attached, calling its scalar computeCFF() as PARTONS always does.
  *
  * For the tensor path it adds crossSectionTensorBatch(): the BMJ12
  * unpolarized-target cross section sigma(lambda, phi), batched over N
- * kinematic points x M phi nodes, with the CFFs taken as complex tensors from
- * DVCSCFFNNTorch so that the autograd graph runs from the NN parameters to
- * the cross section.
+ * kinematic points x M phi nodes, with the CFFs taken as [N] complex tensors.
+ * The CFFs come from the base DVCSProcessModuleTorch, which fetches them
+ * generically before this class's setup runs (any PARTONS CFF module; with
+ * the network the autograd graph runs from the NN parameters to the cross
+ * section) -- as PARTONS' DVCSProcessModule does for its concrete processes.
+ * This class holds only BMJ12 itself.
  *
  * The pure-kinematic BMJ12 machinery (Fourier/angular coefficients, K, epsilon,
  * form factors, phase space, ...) is transcribed verbatim from
@@ -53,11 +60,14 @@ public:
     // / CrossSectionInterf). Each assumes the phi-independent setup has run;
     // the base crossSectionTensorBatch() template method drives setup + the
     // selected sum.
-    torch::Tensor crossSectionBHTensorBatch(double beamHelicity, double beamCharge,
+    PARTONS::PhysicalType<torch::Tensor> crossSectionBHTensorBatch(
+            double beamHelicity, double beamCharge,
             const torch::Tensor& phi) override;
-    torch::Tensor crossSectionVCSTensorBatch(double beamHelicity, double beamCharge,
+    PARTONS::PhysicalType<torch::Tensor> crossSectionVCSTensorBatch(
+            double beamHelicity, double beamCharge,
             const torch::Tensor& phi) override;
-    torch::Tensor crossSectionInterfTensorBatch(double beamHelicity, double beamCharge,
+    PARTONS::PhysicalType<torch::Tensor> crossSectionInterfTensorBatch(
+            double beamHelicity, double beamCharge,
             const torch::Tensor& phi) override;
 
 protected:
@@ -67,10 +77,10 @@ protected:
 private:
 
     /**
-     * Batched (N-point) sibling of setupKinematicsTorch: the BMJ12 derived
-     * quantities and angular coefficients as [N]-tensor arithmetic, plus one
-     * batched NN forward for the CFFs. Called once by the base
-     * crossSectionTensorBatch() template method.
+     * The BMJ12 derived quantities and angular coefficients as [N]-tensor
+     * arithmetic, plus the BMJ12 helicity combinations of the CFFs the base
+     * already stored in m_cffsBatch. Twin of DVCSProcessBMJ12::initModule();
+     * called once per batch by prepareTensorBatch().
      */
     void setupKinematicsTorchBatch(const torch::Tensor& xB, const torch::Tensor& t,
             const torch::Tensor& Q2, const torch::Tensor& E) override;
@@ -98,7 +108,7 @@ private:
     double m_M[2];
 
     // ----- batched cached state ----------------------------------------------
-    // CFFs from the NN, batched ([N] complex double, grad-tracked)
+    // CFFs, batched ([N] complex double; grad-tracked when they come from the NN)
     torch::Tensor m_CFFstdBatch[4];
     torch::Tensor m_CFFBatch[4][3];
 

@@ -79,7 +79,11 @@ public:
         float test_fraction = 0.3f,
         const std::vector<std::string>& output_layer = {
             "ImH", "ReH", "ImE", "ReE", "ImHt", "ReHt", "ImEt", "ReEt"},
-        double x_pow = 0.0);
+        double x_pow = 0.0,
+        // PARTONS scalar process class name. The tensor paths use its torch
+        // twin (this + "Torch", resolved by name); the native paths use it as
+        // is -- one setting, so the two cannot end up on different processes.
+        const std::string& process_name = "DVCSProcessBMJ12");
 
     void train_nn();
     void predict();
@@ -89,10 +93,28 @@ public:
 
     // Differential test of the batched BMJ12 port with the network taken out of
     // the picture: fixed CFFs (DVCSCFFConstant) pushed through PARTONS' native
-    // scalar process module and through DVCSProcessBMJ12Torch (via
-    // DVCSCFFScalarTorch), so a disagreement can only come from the two
-    // transcriptions of BMJ12. Needs no trained model.
-    void observ_calc_scalar_cff();
+    // scalar process module and through DVCSProcessBMJ12Torch, so a
+    // disagreement can only come from the two transcriptions of BMJ12. Scans every point of the dataset. Needs no
+    // trained model.
+    //
+    // The observable pair is a parameter so any torch leaf can be checked
+    // against the PARTONS class it mirrors -- pass the two classIds and a
+    // label. Defaults to the sin(1phi) moment. Note the two kinds of leaf read
+    // the kinematics differently: a moment integrates phi away, while a
+    // pointwise leaf evaluates at each point's own phi, so for the latter the
+    // phi column of the data file is what is being tested.
+    //
+    // spread_phi exists because of that last sentence: the current data file
+    // carries the SAME phi in every row, so a pointwise leaf scanned over the
+    // dataset is tested at exactly one phi and a formula that is wrong
+    // elsewhere in phi passes. With spread_phi = true the kinematics keep their
+    // (xB, t, Q2, E) but phi is replaced by an even sweep of [0, 2pi), which
+    // costs nothing and closes the hole. It is a no-op for a moment leaf, which
+    // ignores the stored phi.
+    void observ_calc_scalar_cff(unsigned int nativeClassId = 0,
+            unsigned int torchClassId = 0,
+            const std::string& label = "DVCSAluMinusSin1Phi (sin1phi moment)",
+            bool spread_phi = false);
 
     // Train n_replicas independent fits to Monte-Carlo-smeared pseudodata
     // (y_smeared = y_obs + N(0, sigma), same formula/independence as Gepard's
@@ -151,16 +173,40 @@ private:
     float m_test_fraction;
     std::vector<std::string> m_output_layer;
     double m_xPow;  // CFF = xB^m_xPow * NNet_output (set once, shared by train/predict/eval)
+    std::string m_processName;  // PARTONS process name; torch twin = this + "Torch"
     CFFNNModel m_net{nullptr};
     torch::Tensor m_X_min, m_X_max;  // per-feature min/max from training set
     float m_best_val_loss = -1.f;    // reduced val chi2 (chi2/n_val) of the snapshot stored in m_net
     std::vector<TrainedModel> m_replicas;
 
+    /**
+     * One observable-format data file: xB|t|Q2|E|phi|<observable>|error.
+     *
+     * observableName is the header's 6th field, and it SELECTS THE OBSERVABLE
+     * THE FIT COMPUTES -- the tensor leaf is that name + "Torch". Before this
+     * existed the header was read and discarded while CustomLoss hardcoded
+     * DVCSAluMinusSin1PhiTorch, so pointing the fitter at a file of A_C data
+     * silently fitted A_LU to it and reported only a poor chi^2.
+     *
+     * The name must therefore be the PARTONS scalar observable CLASS name
+     * (DVCSAluMinusSin1Phi, DVCSAcCos0Phi, ...), not a free-form label. The
+     * scalar name rather than the torch one because the file then describes
+     * physics rather than our implementation, and because it yields both
+     * classIds: the native one for observ_calc_scalar_cff() and the tensor
+     * twin by appending "Torch".
+     */
+    struct ObservableData {
+        torch::Tensor X;        ///< [N,3] = (xB, t, Q2)
+        torch::Tensor E;        ///< [N]
+        torch::Tensor phi;      ///< [N]
+        torch::Tensor y_obs;    ///< [N], header field 6
+        torch::Tensor sigma;    ///< [N], header field 7 ("error")
+        std::string observableName;
+    };
+
     // Load observable-format CSV: xB|t|Q2|E|phi|<observable>|error.
-    // Returns {X[N,3]=(xB,t,Q2), E[N], phi[N], y_obs[N]=col 5, sigma[N]=last col}.
     // Used for training directly on observable data via CustomLoss.
-    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
-            torch::Tensor> load_data_observable() const;
+    ObservableData load_data_observable() const;
 
     // One fully independent fit attempt: if smear, draws
     // y_used = y_obs + N(0, sigma) before the train/val split; otherwise
@@ -176,7 +222,8 @@ private:
     // MC smear draw) and the train/val shuffle RNG, for reproducibility.
     // normalize_loss is forwarded to CustomLoss (see train_replicas()).
     struct FitOutcome { TrainedModel model; bool hopeless; };
-    FitOutcome fit_once(const torch::Tensor& X, const torch::Tensor& E,
+    FitOutcome fit_once(const std::string& observableName,
+            const torch::Tensor& X, const torch::Tensor& E,
             const torch::Tensor& phi, const torch::Tensor& y_obs,
             const torch::Tensor& sigma, bool smear,
             const std::string& learning_curve_path,
