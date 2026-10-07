@@ -79,7 +79,11 @@ public:
         float test_fraction = 0.3f,
         const std::vector<std::string>& output_layer = {
             "ImH", "ReH", "ImE", "ReE", "ImHt", "ReHt", "ImEt", "ReEt"},
-        double x_pow = 0.0);
+        double x_pow = 0.0,
+        // PARTONS scalar process class name. The tensor paths use its torch
+        // twin (this + "Torch", resolved by name); the native paths use it as
+        // is -- one setting, so the two cannot end up on different processes.
+        const std::string& process_name = "DVCSProcessBMJ12");
 
     void train_nn();
     void predict();
@@ -169,6 +173,7 @@ private:
     float m_test_fraction;
     std::vector<std::string> m_output_layer;
     double m_xPow;  // CFF = xB^m_xPow * NNet_output (set once, shared by train/predict/eval)
+    std::string m_processName;  // PARTONS process name; torch twin = this + "Torch"
     CFFNNModel m_net{nullptr};
     torch::Tensor m_X_min, m_X_max;  // per-feature min/max from training set
     float m_best_val_loss = -1.f;    // reduced val chi2 (chi2/n_val) of the snapshot stored in m_net

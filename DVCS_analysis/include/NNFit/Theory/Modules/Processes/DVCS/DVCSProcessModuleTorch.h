@@ -19,6 +19,9 @@
 #include <partons/modules/convol_coeff_function/DVCS/DVCSConvolCoeffFunctionModule.h>
 #include <partons/modules/scales/DVCS/DVCSScalesModule.h>
 #include <partons/modules/xi_converter/DVCS/DVCSXiConverterModule.h>
+#include <partons/BaseObjectRegistry.h>
+#include <partons/ModuleObjectFactory.h>
+#include <partons/Partons.h>
 #include <torch/torch.h>
 
 #include <complex>
@@ -60,7 +63,7 @@ public:
 
     /**
      * The tensor interface of a PARTONS process module, or nullptr when it has
-     * none (a plain DVCSProcessBMJ12, BM03, ...). A cross-cast: this mixin and
+     * none (a plain DVCSProcessBMJ12, GV08, VGG99). A cross-cast: this mixin and
      * PARTONS::DVCSProcessModule are unrelated bases of one complete object,
      * so static_cast cannot express it.
      *
@@ -85,6 +88,51 @@ public:
                     "Tensor path requires a DVCSProcessModuleTorch process module.");
         }
         return *pTorch;
+    }
+
+    /**
+     * Create the torch twin of a PARTONS process, chosen BY NAME through
+     * PARTONS' factory -- the mechanism its XML scenarios use -- so the caller
+     * names the process as a setting rather than compiling in a classId.
+     *
+     * @param processName the PARTONS scalar class name ("DVCSProcessBMJ12"),
+     *        the same convention as the data file's observable header: the
+     *        torch twin is this + "Torch", and the name also gives the native
+     *        class, so the scalar and tensor paths cannot drift apart.
+     * @param caller for the error messages.
+     * Throws at once, naming both spellings, if no twin is registered or the
+     * class found does not implement this interface.
+     */
+    static PARTONS::DVCSProcessModule* newTorchProcessModule(
+            const std::string& processName, const std::string& caller) {
+        const std::string torchName = processName + "Torch";
+        PARTONS::DVCSProcessModule* pProc = 0;
+        try {
+            pProc = PARTONS::Partons::getInstance()->getModuleObjectFactory()
+                    ->newDVCSProcessModule(torchName);
+        } catch (const ElemUtils::CustomException&) {
+            // Two different mistakes, told apart: a name PARTONS does not know
+            // at all (a typo), or a real PARTONS process with no torch port
+            // yet. get() looks the prototype up without creating a module.
+            bool partonsKnowsIt = true;
+            try {
+                PARTONS::BaseObjectRegistry::getInstance()->get(processName);
+            } catch (const ElemUtils::CustomException&) {
+                partonsKnowsIt = false;
+            }
+            throw ElemUtils::CustomException(caller, __func__, partonsKnowsIt
+                    ? "Process '" + processName + "' has no tensor twin '"
+                      + torchName + "' registered. Only processes with a torch "
+                      "port can drive the tensor path."
+                    : "No PARTONS process named '" + processName
+                      + "' -- check the spelling (e.g. \"DVCSProcessBMJ12\").");
+        }
+        if (!tryFrom(pProc)) {
+            throw ElemUtils::CustomException(caller, __func__,
+                    "'" + torchName + "' is registered but does not implement "
+                    "DVCSProcessModuleTorch.");
+        }
+        return pProc;
     }
 
 

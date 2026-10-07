@@ -79,7 +79,8 @@ int main(int argc, char** argv) {
             "/Users/marianav/Documents/Research/Analysis/GPD_studies/Data/Partons_input/BSD_CLAS_18_MH_format_XLU_phi_error.csv",
             0.3f,
             {"ImH"},// can be {"ReH", "ImH","ReE", "ImE","ReHt", "ImHt","ReEt", "ImEt"}
-            0.0);  // x_pow: CFF = xB^x_pow * NNet_output; NN learns xB*CFF (~ O(1) near small xB)
+            0.0,   // x_pow: CFF = xB^x_pow * NNet_output; NN learns xB*CFF (~ O(1) near small xB)
+            "DVCSProcessBMJ12");  // process: PARTONS name; the tensor paths use its "Torch" twin
         fitter.train_nn();
         fitter.predict();
         fitter.observ_calc();

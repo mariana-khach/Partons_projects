@@ -10,7 +10,7 @@
 #include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSObservableTorch.h"
 #include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusTorch.h"
 #include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.h"
-#include "../../include/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.h"
+#include "../../include/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessModuleTorch.h"
 #include "../../include/NNFit/Theory/Modules/Services/DVCS/DVCSObservableServiceTorch.h"
 
 #include <partons/beans/List.h>
@@ -20,7 +20,6 @@
 #include <partons/beans/PerturbativeQCDOrderType.h>
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAluMinus.h>
 #include <partons/modules/observable/DVCS/asymmetry/DVCSAluMinusSin1Phi.h>
-#include <partons/modules/process/DVCS/DVCSProcessBMJ12.h>
 #include <partons/modules/scales/DVCS/DVCSScalesQ2Multiplier.h>
 #include <partons/modules/xi_converter/DVCS/DVCSXiConverterXBToXi.h>
 #include <partons/ModuleObjectFactory.h>
@@ -48,11 +47,13 @@ const std::string CFF_NN_Fitter::OUT_DIR =
 CFF_NN_Fitter::CFF_NN_Fitter(const std::string& data_path,
                                float test_fraction,
                                const std::vector<std::string>& output_layer,
-                               double x_pow)
+                               double x_pow,
+                               const std::string& process_name)
     : m_data_path(data_path),
       m_test_fraction(test_fraction),
       m_output_layer(output_layer),
-      m_xPow(x_pow) {}
+      m_xPow(x_pow),
+      m_processName(process_name) {}
 
 CFF_NN_Fitter::ObservableData CFF_NN_Fitter::load_data_observable() const {
 
@@ -202,7 +203,7 @@ CFF_NN_Fitter::FitOutcome CFF_NN_Fitter::fit_once(
 
     // chi^2 loss on the observable, evaluated through the differentiable *Torch
     // chain. Shares `net` (optimizer updates propagate); scaling matches observ_calc*.
-    CustomLoss loss_fn(net, m_output_layer, observableName, X_min, X_max,
+    CustomLoss loss_fn(net, m_output_layer, observableName, m_processName, X_min, X_max,
             m_xPow, normalize_loss);
 
     // Early stopping parameters
@@ -416,8 +417,7 @@ void CFF_NN_Fitter::predict() {
             Partons::getInstance()->getModuleObjectFactory()->newDVCSScalesModule(
                     DVCSScalesQ2Multiplier::classId);
     DVCSProcessModule* pDVCSProcess =
-            Partons::getInstance()->getModuleObjectFactory()->newDVCSProcessModule(
-                    DVCSProcessBMJ12Torch::classId);
+            DVCSProcessModuleTorch::newTorchProcessModule(m_processName, "CFF_NN_Fitter");
     // Same observable the fit used: taken from the data file's header, not
     // hardcoded, so training and prediction cannot drift apart.
     DVCSObservable* pDVCSObs =
@@ -624,7 +624,7 @@ void CFF_NN_Fitter::observ_calc() {
 
     DVCSProcessModule* pDVCSProcess =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSProcessModule(
-                    DVCSProcessBMJ12::classId);
+                    m_processName);
 
     DVCSObservable* pDVCSObs =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
@@ -712,7 +712,7 @@ void CFF_NN_Fitter::observ_calc_scalar_cff(unsigned int nativeClassId,
                     DVCSScalesQ2Multiplier::classId);
     DVCSProcessModule* pProcessA =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSProcessModule(
-                    DVCSProcessBMJ12::classId);
+                    m_processName);
     DVCSObservable* pObsA =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
                     nativeClassId);
@@ -737,8 +737,7 @@ void CFF_NN_Fitter::observ_calc_scalar_cff(unsigned int nativeClassId,
             Partons::getInstance()->getModuleObjectFactory()->newDVCSScalesModule(
                     DVCSScalesQ2Multiplier::classId);
     DVCSProcessModule* pProcessB =
-            Partons::getInstance()->getModuleObjectFactory()->newDVCSProcessModule(
-                    DVCSProcessBMJ12Torch::classId);
+            DVCSProcessModuleTorch::newTorchProcessModule(m_processName, "CFF_NN_Fitter");
     DVCSObservable* pObsB =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
                     torchClassId);
@@ -802,7 +801,7 @@ void CFF_NN_Fitter::observ_calc_scalar_cff(unsigned int nativeClassId,
 
     std::cout << "\nScalar-CFF differential test (DVCSCFFConstant, no network): "
               << label << "\n";
-    std::cout << "  native scalar BMJ12 vs torch batched BMJ12 over "
+    std::cout << "  native " << m_processName << " vs its torch twin over "
               << N << " dataset points\n\n";
     if (spread_phi)
         std::cout << "  phi swept over [0, 2pi) instead of the data file's "
@@ -949,8 +948,7 @@ void CFF_NN_Fitter::observ_calc_torch() {
                     DVCSScalesQ2Multiplier::classId);
 
     DVCSProcessModule* pDVCSProcess =
-            Partons::getInstance()->getModuleObjectFactory()->newDVCSProcessModule(
-                    DVCSProcessBMJ12Torch::classId);
+            DVCSProcessModuleTorch::newTorchProcessModule(m_processName, "CFF_NN_Fitter");
 
     DVCSObservable* pDVCSObs =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(
@@ -1022,8 +1020,7 @@ void CFF_NN_Fitter::observ_calc_torch_scalar() {
                     DVCSScalesQ2Multiplier::classId);
 
     DVCSProcessModule* pDVCSProcess =
-            Partons::getInstance()->getModuleObjectFactory()->newDVCSProcessModule(
-                    DVCSProcessBMJ12Torch::classId);
+            DVCSProcessModuleTorch::newTorchProcessModule(m_processName, "CFF_NN_Fitter");
 
     DVCSObservable* pDVCSObs =
             Partons::getInstance()->getModuleObjectFactory()->newDVCSObservable(

@@ -206,7 +206,7 @@ The old CFF-label loader `CFF_NN_Fitter::load_data()` (which read `…|ImH|ReH|�
 
 Data path and output paths are hardcoded absolute paths in `src/Run_CFF_NN_Fit.cpp` and `src/NNFit/CFF_NN_Fit.cpp` (pointing to `My_Analysis/Partons_output/`). Update these when moving environments.
 
-**Datasets fitted so far** — switching between them is two lines in `Run_CFF_NN_Fit.cpp` (path + output layer); the observable follows the header:
+**Datasets fitted so far** — switching between them is two lines in `Run_CFF_NN_Fit.cpp` (path + output layer); the observable follows the header, and the process is the fitter's `process_name` argument (PARTONS name, default `"DVCSProcessBMJ12"`; the tensor paths use its `Torch` twin, resolved by name):
 
 | File | Observable | N | Output | Result |
 |---|---|---|---|---|
@@ -1299,7 +1299,7 @@ Also refreshed `DVCSProcessBMJ12Torch.h`'s class comment, which still named `DVC
 
 ### Moment leaves re-parented; every torch observable composes with any process
 
-Closes the gap left open on 2026-10-02. A `*Torch` observable leaf on a plain `DVCSProcessBMJ12` (or BM03, GV08, …) used to throw on both paths. Now its **scalar** path falls back to the native PARTONS class it derives from; its **tensor** path still throws, since a gradient cannot come out of native double arithmetic.
+Closes the gap left open on 2026-10-02. A `*Torch` observable leaf on a plain `DVCSProcessBMJ12` (or GV08, VGG99) used to throw on both paths. Now its **scalar** path falls back to the native PARTONS class it derives from; its **tensor** path still throws, since a gradient cannot come out of native double arithmetic.
 
 **Why the moment leaves had to be re-parented first.** They derived from the torch pointwise class (`DVCSAluMinusSin1PhiTorch : DVCSAluMinusTorch`), so their inherited PARTONS method was the *pointwise* `DVCSAluMinus::computeObservable` — a fallback to it would have returned A_LU(φ) where A_LU^{sin1φ} was asked for. Two fixes were weighed: **delegate** (hold an internal PARTONS moment instance and forward to it) or **re-parent** (derive from the PARTONS moment class). Re-parenting was chosen because it adds nothing PARTONS lacks: no second object to clone and release, no process module to copy onto it before each call, and `configure()` — XML integrator settings included — reaches the fallback by inheritance rather than by hand-forwarding that could silently be forgotten. Each torch class now sits directly under the PARTONS class it mirrors, the pattern `DVCSCFFNNTorch` and `DVCSProcessBMJ12Torch` already followed.
 
@@ -1358,3 +1358,18 @@ The chain-correspondence diagram above was rewritten at the same time: it now sh
 So a second torch process implements exactly what a second PARTONS process does: its setup and its three sub-process cross sections.
 
 **Verified**: the 28 differential tests (scalar-CFF route) reproduce the baseline line for line; after a central fit on the 16-point file the three `observ_calc*` paths agree (0.144702, `requires_grad = true`, R² 0.75) — the network route through the moved code. Fit outputs overwritten by that run were backed up and restored byte-for-byte.
+
+### The process is a setting, resolved by name
+
+The process used to be compiled in: `DVCSProcessBMJ12Torch::classId` at five sites (`CustomLoss.cpp` and four in `CFF_NN_Fit.cpp`) and `DVCSProcessBMJ12::classId` at two. It is now one string, `CFF_NN_Fitter`'s `process_name` argument (default `"DVCSProcessBMJ12"`, set explicitly in `Run_CFF_NN_Fit.cpp`), following the observable header's convention: the PARTONS scalar name, with the tensor paths using `+ "Torch"`. One string gives both classes, so the native and tensor paths cannot end up on different processes. `CustomLoss` takes it as a **required** argument, like `observableName`.
+
+Resolution goes through PARTONS' factory by name — the mechanism its XML scenarios use — via `DVCSProcessModuleTorch::newTorchProcessModule(name, caller)`. Neither `CustomLoss.cpp` nor `CFF_NN_Fit.cpp` includes a concrete process header any more, so a new torch process needs no change to either: its `.cpp` registers itself at startup.
+
+It fails at startup and tells the two mistakes apart:
+
+- `"DVCSProcessGV08"` → `Process 'DVCSProcessGV08' has no tensor twin 'DVCSProcessGV08Torch' registered.`
+- `"DVCSProcessBMJ1Z"` → `No PARTONS process named 'DVCSProcessBMJ1Z' -- check the spelling.` (decided by looking the PARTONS name up in `BaseObjectRegistry::get`, which does not create a module).
+
+Note this PARTONS installation has **BMJ12, GV08 and VGG99** only — no BM03, which an earlier note listed.
+
+**Verified**: with `"DVCSProcessBMJ12"`, a central fit plus the 28 differential tests reproduce the baseline line for line (only the test header now names the process); the three `observ_calc*` paths agree (0.131951, `requires_grad = true`). Both failure messages checked. The test runs' fit outputs were backed up and restored byte-for-byte.

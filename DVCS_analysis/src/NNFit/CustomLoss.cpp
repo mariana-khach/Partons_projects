@@ -19,7 +19,7 @@
 
 #include "../../include/NNFit/Theory/Modules/CFFs/DVCS/DVCSCFFNNTorch.h"
 #include "../../include/NNFit/Theory/Modules/Obs/DVCS/DVCSAluMinusSin1PhiTorch.h"
-#include "../../include/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessBMJ12Torch.h"
+#include "../../include/NNFit/Theory/Modules/Processes/DVCS/DVCSProcessModuleTorch.h"
 #include "../../include/NNFit/Theory/Modules/Services/DVCS/DVCSObservableServiceTorch.h"
 
 namespace {
@@ -28,7 +28,8 @@ const torch::TensorOptions kF64 = torch::TensorOptions().dtype(torch::kFloat64);
 
 CustomLossImpl::CustomLossImpl(CFFNNModel net,
         const std::vector<std::string>& outputLayer,
-        const std::string& observableName, const torch::Tensor& xMin,
+        const std::string& observableName, const std::string& processName,
+        const torch::Tensor& xMin,
         const torch::Tensor& xMax, double xPow, bool normalize)
         : m_normalize(normalize) {
 
@@ -48,9 +49,9 @@ CustomLossImpl::CustomLossImpl(CFFNNModel net,
             Partons::getInstance()->getModuleObjectFactory()->newDVCSScalesModule(
                     DVCSScalesQ2Multiplier::classId);
 
+    // The process is a setting, resolved by name: processName + "Torch".
     DVCSProcessModule* pProc =
-            Partons::getInstance()->getModuleObjectFactory()->newDVCSProcessModule(
-                    DVCSProcessBMJ12Torch::classId);
+            DVCSProcessModuleTorch::newTorchProcessModule(processName, "CustomLossImpl");
 
     // The observable comes from the DATA FILE's header, not from this file.
     // The tensor leaf is the PARTONS class name + "Torch".
